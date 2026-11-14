@@ -258,6 +258,22 @@ export function isEventOfficiallyActive(activeEvent?: ActiveEvent | null): boole
   return Boolean(activeEvent && !activeEvent.resolved);
 }
 
+export function isMajorEventCutsceneActive(
+  state: Pick<GameState, 'screen' | 'sleepPhase' | 'activeEvent'>
+): boolean {
+  const evt = state.activeEvent;
+  return Boolean(
+    state.screen === 'PLAYING' &&
+      state.sleepPhase !== 'sleeping' &&
+      evt &&
+      !evt.resolved &&
+      evt.animationRemaining <= 0 &&
+      !evt.cutsceneCompleted &&
+      evt.definition.cutscene &&
+      evt.definition.cutscene.length > 0
+  );
+}
+
 export function getRadiationOutsideDamageForEvent(
   def: EventDefinition,
   difficulty: DifficultyLevel
@@ -278,7 +294,7 @@ export function applyRadiationImpactDamage(state: GameState): {
   healthDelta: number;
 } {
   const activeEvent = state.activeEvent;
-  if (!activeEvent || activeEvent.radiationPenaltyApplied) {
+  if (!activeEvent || activeEvent.radiationPenaltyApplied || isMajorEventCutsceneActive(state)) {
     return { nextState: state, healthDelta: 0 };
   }
   const def = activeEvent.definition;
@@ -357,7 +373,12 @@ export function applyGradualEventHealthTick(
   elapsedSeconds: number
 ): { nextState: GameState; healthDelta: number } {
   const activeEvent = state.activeEvent;
-  if (!activeEvent || activeEvent.animationRemaining <= 0 || elapsedSeconds <= 0) {
+  if (
+    !activeEvent ||
+    activeEvent.animationRemaining <= 0 ||
+    elapsedSeconds <= 0 ||
+    isMajorEventCutsceneActive(state)
+  ) {
     return { nextState: state, healthDelta: 0 };
   }
 
@@ -417,7 +438,8 @@ export function applyLateShelterPenalty(state: GameState): {
     !activeEvent ||
     activeEvent.shelterEnteredLate ||
     !isShelterRequiredEvent(activeEvent) ||
-    !isEventOfficiallyActive(activeEvent)
+    !isEventOfficiallyActive(activeEvent) ||
+    isMajorEventCutsceneActive(state)
   ) {
     return { nextState: state, penalty: 0, radiationGain: 0 };
   }
@@ -945,10 +967,13 @@ export function applyInitialEventImpact(state: GameState): {
   const nextScars = [...existingScars, ...addedScars].slice(-28);
   const buildingImpacts = Array.from(impactMap.values());
 
+  const cutsceneActive = isMajorEventCutsceneActive(state);
+
   // Apply intensity-scaled physical impact shock for non-radiation hazards if crew is outside shelter
   let physicalShockApplied = 0;
   let crewAfterShock = state.crew;
   if (
+    !cutsceneActive &&
     (!def.radiationLevel || def.radiationLevel <= 0) &&
     !isCrewProtectedByShelter(state.crew, nextBuildings)
   ) {
@@ -984,6 +1009,14 @@ export function applyInitialEventImpact(state: GameState): {
       totalHazardHealthLost: (activeEvent.totalHazardHealthLost ?? 0) + physicalShockApplied,
     },
   };
+
+  if (cutsceneActive) {
+    return {
+      buildingImpacts,
+      nextState: withInfra,
+      healthDelta: 0,
+    };
+  }
 
   // Apply exact radiation damage at impact if crew is outside shelter
   const { nextState: withRadiation, healthDelta: radDelta } = applyRadiationImpactDamage(withInfra);
@@ -1248,7 +1281,18 @@ export function resolveEventAtEndOfDay(params: {
     summaryParts.push(`Decision: ${activeEvent.mitigationSummary}`);
   }
 
-  if (def.radiationLevel && def.radiationLevel > 0) {
+  const cutsceneUnfinished = Boolean(
+    !activeEvent.resolved &&
+      activeEvent.animationRemaining <= 0 &&
+      !activeEvent.cutsceneCompleted &&
+      def.cutscene &&
+      def.cutscene.length > 0
+  );
+
+  if (cutsceneUnfinished) {
+    radiationGain = 0;
+    crewConditionPenalty = 0;
+  } else if (def.radiationLevel && def.radiationLevel > 0) {
     const shelter = nextBuildings.radiation_shelter;
     if (protectedInShelter) {
       const baseEffectiveness = Math.min(0.85, (shelter.condition / 100) * 0.85);
@@ -1290,7 +1334,7 @@ export function resolveEventAtEndOfDay(params: {
     buildings: nextBuildings,
     resources: nextResources,
     radiationGain,
-    crewEnergyPenalty: protectedInShelter ? 0 : def.crewEnergyImpact ?? 0,
+    crewEnergyPenalty: cutsceneUnfinished || protectedInShelter ? 0 : def.crewEnergyImpact ?? 0,
     crewConditionPenalty,
     buildingImpacts,
     consumedExtraDust,

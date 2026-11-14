@@ -34,6 +34,7 @@ import { RESOURCE_CONFIGS, RESOURCE_ORDER } from '../../data/resources';
 import {
   isCrewProtectedByShelter,
   isEventOfficiallyActive,
+  isMajorEventCutsceneActive,
   isShelterRequiredEvent,
 } from '../../systems/events';
 import {
@@ -221,10 +222,11 @@ export function GameHUD({
   );
 
   const crewProtected = isCrewProtectedByShelter(state.crew, state.buildings);
+  const cutsceneActive = isMajorEventCutsceneActive(state);
   const lingeringHazards = state.lingeringHazards ?? [];
   const primaryLingeringHazard = lingeringHazards[0] ?? null;
-  const activeOutdoorHazard = isEventOfficiallyActive(state.activeEvent) && !crewProtected;
-  const lingeringOutdoorHazard = lingeringHazards.length > 0 && !crewProtected;
+  const activeOutdoorHazard = !cutsceneActive && isEventOfficiallyActive(state.activeEvent) && !crewProtected;
+  const lingeringOutdoorHazard = !cutsceneActive && lingeringHazards.length > 0 && !crewProtected;
   const hazardExposed = activeOutdoorHazard || lingeringOutdoorHazard;
   const tutorialStep = getCurrentTutorialStep(state);
 

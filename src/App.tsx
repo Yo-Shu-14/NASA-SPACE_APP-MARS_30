@@ -26,6 +26,7 @@ import { SUBJECT_DESCRIPTIONS } from './data/nasa';
 import { PhaserGameHost } from './game/PhaserGameHost';
 import { gameStore, WorldFeedbackEvent } from './state/gameStore';
 import { MusicTheme, soundFX } from './systems/audio';
+import { isMajorEventCutsceneActive } from './systems/events';
 import { GameState } from './types/game';
 import {
   focusGameplayCanvas,
@@ -509,20 +510,20 @@ export default function App() {
       )}
 
       {/* Major Event Crew Cutscene (runs before player chooses response plan) */}
-      {state.screen === 'PLAYING' &&
-        state.sleepPhase !== 'sleeping' &&
-        state.activeEvent &&
-        !state.activeEvent.resolved &&
-        state.activeEvent.animationRemaining <= 0 &&
-        !state.activeEvent.cutsceneCompleted &&
-        Boolean(state.activeEvent.definition.cutscene?.length) && (
+      {isMajorEventCutsceneActive(state) && state.activeEvent && (
+        <>
+          <div
+            aria-hidden="true"
+            className="fixed inset-0 z-[25] pointer-events-auto bg-transparent"
+          />
           <MajorEventCutscene
             key={`cutscene_${state.activeEvent.dayTriggered}_${state.activeEvent.definition.id}`}
             event={state.activeEvent}
             state={state}
             onComplete={() => gameStore.completeEventCutscene()}
           />
-        )}
+        </>
+      )}
 
       {/* Active Environmental Event Alert (opens after live animation & cutscene complete) */}
       {state.screen === 'PLAYING' &&

@@ -31,6 +31,7 @@ import {
   createScarsForEvent,
   generateMissionEventSchedule,
   isEventOfficiallyActive,
+  isMajorEventCutsceneActive,
   isShelterRequiredEvent,
   resolveEventAtEndOfDay,
   tickLingeringHazardsEndOfDay,
@@ -376,6 +377,10 @@ class GameStore {
     this.eventAnimTimer = globalThis.setInterval(() => {
       const cur = this.state;
       if (cur.screen !== 'PLAYING' || cur.sleepPhase === 'sleeping') return;
+      if (isMajorEventCutsceneActive(cur)) {
+        this.stopEventAnimationTicker();
+        return;
+      }
       const evt = cur.activeEvent;
       if (!evt || evt.animationRemaining <= 0) {
         this.stopEventAnimationTicker();
@@ -846,7 +851,8 @@ class GameStore {
       this.state.screen !== 'PLAYING' ||
       this.state.sleepPhase !== 'idle' ||
       this.state.sleepingRemaining > 0 ||
-      this.state.pendingAction?.phase === 'working'
+      this.state.pendingAction?.phase === 'working' ||
+      isMajorEventCutsceneActive(this.state)
     ) {
       return;
     }
@@ -1152,7 +1158,8 @@ class GameStore {
       this.state.screen !== 'PLAYING' ||
       this.state.sleepPhase !== 'idle' ||
       this.state.sleepingRemaining > 0 ||
-      this.state.pendingAction?.phase === 'working'
+      this.state.pendingAction?.phase === 'working' ||
+      isMajorEventCutsceneActive(this.state)
     ) {
       return;
     }
@@ -1180,7 +1187,8 @@ class GameStore {
       this.state.screen !== 'PLAYING' ||
       this.state.sleepPhase !== 'idle' ||
       this.state.sleepingRemaining > 0 ||
-      this.state.pendingAction?.phase === 'working'
+      this.state.pendingAction?.phase === 'working' ||
+      isMajorEventCutsceneActive(this.state)
     ) {
       return;
     }
@@ -1249,7 +1257,8 @@ class GameStore {
       this.state.screen !== 'PLAYING' ||
       this.state.sleepPhase !== 'idle' ||
       this.state.sleepingRemaining > 0 ||
-      this.state.pendingAction?.phase === 'working'
+      this.state.pendingAction?.phase === 'working' ||
+      isMajorEventCutsceneActive(this.state)
     ) {
       return;
     }
@@ -1299,7 +1308,8 @@ class GameStore {
       this.state.screen !== 'PLAYING' ||
       this.state.sleepPhase !== 'idle' ||
       this.state.sleepingRemaining > 0 ||
-      this.state.pendingAction?.phase === 'working'
+      this.state.pendingAction?.phase === 'working' ||
+      isMajorEventCutsceneActive(this.state)
     ) {
       return;
     }
@@ -1362,7 +1372,8 @@ class GameStore {
     if (
       this.state.screen !== 'PLAYING' ||
       !this.state.activeEvent ||
-      this.state.sleepPhase === 'sleeping'
+      this.state.sleepPhase === 'sleeping' ||
+      isMajorEventCutsceneActive(this.state)
     ) {
       return;
     }
@@ -1388,7 +1399,8 @@ class GameStore {
   public chooseEventDecision(choiceId: string) {
     if (
       this.state.screen !== 'PLAYING' ||
-      this.state.sleepPhase === 'sleeping'
+      this.state.sleepPhase === 'sleeping' ||
+      isMajorEventCutsceneActive(this.state)
     ) {
       return;
     }
@@ -1480,7 +1492,8 @@ class GameStore {
       this.state.screen !== 'PLAYING' ||
       this.state.sleepPhase !== 'idle' ||
       this.state.sleepingRemaining > 0 ||
-      this.state.pendingAction?.phase === 'working'
+      this.state.pendingAction?.phase === 'working' ||
+      isMajorEventCutsceneActive(this.state)
     ) {
       return;
     }
@@ -1505,7 +1518,13 @@ class GameStore {
   }
 
   public beginHabitatSleep() {
-    if (this.state.screen !== 'PLAYING' || this.state.sleepPhase !== 'returning') return;
+    if (
+      this.state.screen !== 'PLAYING' ||
+      this.state.sleepPhase !== 'returning' ||
+      isMajorEventCutsceneActive(this.state)
+    ) {
+      return;
+    }
     if (
       this.state.crew.inShelter &&
       isShelterRequiredEvent(this.state.activeEvent) &&
@@ -1523,7 +1542,7 @@ class GameStore {
   }
 
   public completeEndDay() {
-    if (this.state.screen !== 'PLAYING') return;
+    if (this.state.screen !== 'PLAYING' || isMajorEventCutsceneActive(this.state)) return;
 
     this.stopSleepTicker();
     this.stopWorkTicker();
