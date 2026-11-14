@@ -1,0 +1,8 @@
+{
+  "name": "Mars 30",
+  "description": "An educational 2D Mars outpost restoration and survival strategy game where players restore Jezero Crater facilities over 30 Martian days for long-term sustainability.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
