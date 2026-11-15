@@ -414,6 +414,9 @@ export default function App() {
                     state={state}
                     minimized={isTaskProgressActive}
                     onClose={() => setLeftDrawerOpen(false)}
+                    onRestCrew={() => gameStore.restCrew()}
+                    onToggleShelter={() => gameStore.toggleCrewShelter()}
+                    onEndDay={() => gameStore.endDay()}
                     onLocateBuilding={(id) => {
                       gameStore.focusBuilding(id);
                       if (window.innerWidth < 768 || window.innerHeight < 520) {

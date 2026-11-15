@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Award,
   Compass,
   Flame,
   Play,
@@ -22,6 +23,7 @@ import {
 } from '../utils/keyboard';
 import { CrewPortrait } from './icons/CrewPortraits';
 import { BuildingIcon, MarsLogoLockup } from './icons/GameIcons';
+import { CreditsModal } from './mission/CreditsModal';
 
 interface TitleScreenProps {
   initialDifficulty?: DifficultyLevel;
@@ -62,6 +64,7 @@ export function TitleScreen({
     initialPlayerName && initialPlayerName !== 'Commander' ? initialPlayerName : ''
   );
   const [isClosing, setIsClosing] = useState(false);
+  const [showCredits, setShowCredits] = useState(false);
   const startTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -112,7 +115,7 @@ export function TitleScreen({
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.repeat || e.metaKey || e.ctrlKey || e.altKey) {
+      if (showCredits || e.defaultPrevented || e.repeat || e.metaKey || e.ctrlKey || e.altKey) {
         return;
       }
       if (isEditableTarget(e.target)) {
@@ -133,7 +136,7 @@ export function TitleScreen({
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [handleStartWithZoom]);
+  }, [handleStartWithZoom, showCredits]);
 
   return (
     <div
@@ -146,8 +149,8 @@ export function TitleScreen({
           isClosing ? 'animate-modal-zoom-out' : 'animate-modal-zoom-in'
         }`}
       >
-        {/* Quiet Mission Context & Audio Control */}
-        <div className="flex items-center justify-between gap-3">
+        {/* Quiet Mission Context, Credits & Audio Control */}
+        <div className="flex items-center justify-between gap-2">
           <div className="text-[11px] font-bold text-[#292C2B]/75 truncate">
             <span>Jezero Crater</span>
             <span aria-hidden="true"> · </span>
@@ -156,23 +159,40 @@ export function TitleScreen({
             <span>30-Sol Mission</span>
           </div>
 
-          {onToggleMute && (
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
+              disabled={isClosing}
               onClick={() => {
                 soundFX.unlockAudio();
-                onToggleMute();
+                soundFX.playSelect();
+                setShowCredits(true);
               }}
-              aria-label={audioMuted ? 'Unmute music and sound effects' : 'Mute music and sound effects'}
-              className="mars-btn w-11 h-11 sm:w-10 sm:h-10 bg-[#FAF0DC] hover:bg-[#FFF8EB] text-[#292C2B] flex items-center justify-center shrink-0 cursor-pointer"
+              aria-label="Open Credits and Acknowledgments"
+              className="mars-btn min-h-[44px] sm:min-h-[40px] px-2.5 sm:px-3 bg-[#FAF0DC] hover:bg-[#FFF8EB] text-[#292C2B] text-xs font-extrabold flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
             >
-              {audioMuted ? (
-                <VolumeX className="w-4 h-4 text-[#C94B43]" aria-hidden="true" />
-              ) : (
-                <Volume2 className="w-4 h-4 text-[#477C9B]" aria-hidden="true" />
-              )}
+              <Award className="w-4 h-4 text-[#B94F32] shrink-0" aria-hidden="true" />
+              <span>Credits</span>
             </button>
-          )}
+
+            {onToggleMute && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundFX.unlockAudio();
+                  onToggleMute();
+                }}
+                aria-label={audioMuted ? 'Unmute music and sound effects' : 'Mute music and sound effects'}
+                className="mars-btn w-11 h-11 sm:w-10 sm:h-10 bg-[#FAF0DC] hover:bg-[#FFF8EB] text-[#292C2B] flex items-center justify-center shrink-0 cursor-pointer"
+              >
+                {audioMuted ? (
+                  <VolumeX className="w-4 h-4 text-[#C94B43]" aria-hidden="true" />
+                ) : (
+                  <Volume2 className="w-4 h-4 text-[#477C9B]" aria-hidden="true" />
+                )}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Hero Title Emblem */}
@@ -343,6 +363,8 @@ export function TitleScreen({
           Tap buildings to inspect · Drag or WASD to pan · Pinch or scroll to zoom · Esc to pause
         </p>
       </div>
+
+      {showCredits && <CreditsModal onClose={() => setShowCredits(false)} />}
     </div>
   );
 }

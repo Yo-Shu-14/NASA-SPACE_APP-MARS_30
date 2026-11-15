@@ -72,7 +72,7 @@ export function validateTask(
   if (state.crew.inShelter) {
     return {
       canExecute: false,
-      reason: 'Crew must stay inside Radiation Storm Shelter until danger passes',
+      reason: 'Crew is inside Shelter — tap Go Outside to work',
     };
   }
 

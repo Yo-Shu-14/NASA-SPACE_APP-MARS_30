@@ -245,17 +245,17 @@ export function getContextualGilMessage(state: GameState): GilMessage {
     };
   }
 
-  // 0d. Crew inside Radiation Storm Shelter — clearly explain why tasks are paused
+  // 0d. Crew inside Radiation Storm Shelter — clearly explain shelter status & freedom to exit
   if (state.crew.inShelter) {
     const radDanger =
       isShelterRequiredEvent(state.activeEvent) && isEventOfficiallyActive(state.activeEvent);
     return {
       id: `sheltering_${state.day}_${radDanger ? 'rad' : 'safe'}`,
       speaker: 'GIL',
-      headline: radDanger ? 'Everyone Is Safe!' : 'Inside Storm Shelter',
+      headline: radDanger ? 'Shielded Inside!' : 'Inside Storm Shelter',
       body: radDanger
-        ? 'All 5 crew & I are shielded inside! Let the warning finish or tap END SOL.'
-        : 'Tasks are paused inside. Tap the Shelter anytime to step back outside.',
+        ? 'All 5 crew & I are safe inside! Wait it out, tap END SOL, or tap Go Outside if you need urgent outdoor repairs (risks HP & radiation).'
+        : 'Tasks are paused inside. Tap Go Outside anytime to resume outpost work.',
       scienceTip: state.activeEvent?.definition.scienceContext,
       descriptionSubject: state.activeEvent?.definition.title ?? 'Radiation Storm Shelter',
       descriptionImageKey: state.activeEvent?.definition.phenomenon ?? 'radiation_shelter',

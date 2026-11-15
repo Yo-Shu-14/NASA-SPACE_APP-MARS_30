@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import {
+  Activity,
+  AlertTriangle,
+  BedDouble,
+  CalendarClock,
   CheckCircle2,
   ClipboardList,
   Clock,
@@ -8,9 +12,11 @@ import {
   Loader2,
   Lock,
   MapPin,
+  Moon,
   Shield,
   Sparkles,
   Sprout,
+  Sun,
   Wrench,
   X,
   Zap,
@@ -20,10 +26,19 @@ import {
   getFacilityDailyProduction,
 } from '../../data/balance';
 import { BUILDING_DEFINITIONS, BUILDING_LIST } from '../../data/buildings';
+import { CROP_MAP } from '../../data/crops';
 import { TOTAL_DAY_HOURS } from '../../data/mission';
+import { RESOURCE_CONFIGS, RESOURCE_ORDER } from '../../data/resources';
 import { TASK_DEFINITIONS } from '../../data/tasks';
 import { getBuildingUnlockStatus } from '../../systems/buildings';
-import { calculateEnergyGenerationStats } from '../../systems/resources';
+import {
+  getActiveOutdoorHazardSummary,
+  isMajorEventCutsceneActive,
+} from '../../systems/events';
+import {
+  calculateDailyRates,
+  calculateEnergyGenerationStats,
+} from '../../systems/resources';
 import { validateTask } from '../../systems/tasks';
 import { BuildingCategory, BuildingId } from '../../types/building';
 import { DifficultyLevel, GameState } from '../../types/game';
@@ -33,6 +48,9 @@ interface MajorTasksSidebarProps {
   state: GameState;
   minimized?: boolean;
   onLocateBuilding: (buildingId: BuildingId) => void;
+  onRestCrew?: () => void;
+  onToggleShelter?: () => void;
+  onEndDay?: () => void;
   onClose: () => void;
 }
 
@@ -193,6 +211,9 @@ export function MajorTasksSidebar({
   state,
   minimized = false,
   onLocateBuilding,
+  onRestCrew,
+  onToggleShelter,
+  onEndDay,
   onClose,
 }: MajorTasksSidebarProps) {
   const [activeTab, setActiveTab] = useState<'tasks' | 'systems'>('tasks');
@@ -206,6 +227,115 @@ export function MajorTasksSidebar({
     hoursElapsed: state.hoursElapsed,
     difficulty: state.difficulty,
   });
+  const dailyRates = calculateDailyRates({
+    buildings: state.buildings,
+    currentResources: state.resources,
+    greenhouseCrop: state.greenhouseCrop,
+    activeEvent: state.activeEvent,
+    modifiers: state.modifiers,
+    difficulty: state.difficulty,
+  });
+  const outdoorHazard = getActiveOutdoorHazardSummary(state);
+
+  const isBusy =
+    state.screen !== 'PLAYING' ||
+    state.sleepPhase !== 'idle' ||
+    state.sleepingRemaining > 0 ||
+    state.pendingAction?.phase === 'working' ||
+    isMajorEventCutsceneActive(state);
+  const canRest =
+    !state.crew.inShelter &&
+    TOTAL_DAY_HOURS - state.hoursElapsed >= 2 &&
+    state.crew.energy < 98;
+
+  // Monitoring computations for calm/light sols
+  const weakestRestored = BUILDING_LIST.map((def) => ({
+    def,
+    bState: state.buildings[def.id],
+  }))
+    .filter(
+      ({ bState }) =>
+        bState.restoredOnce && bState.status !== 'inactive'
+    )
+    .sort((a, b) => a.bState.condition - b.bState.condition)[0];
+
+  const nextOffline = BUILDING_LIST.map((def) => ({
+    def,
+    bState: state.buildings[def.id],
+    unlock: getBuildingUnlockStatus(def.id, state),
+  }))
+    .filter(({ bState }) => !bState.restoredOnce || bState.status === 'inactive')
+    .sort((a, b) => Number(b.unlock.unlocked) - Number(a.unlock.unlocked))[0];
+
+  const focusBuildingMonitor =
+    weakestRestored && weakestRestored.bState.condition < 96
+      ? {
+          id: weakestRestored.def.id,
+          name: weakestRestored.def.shortName,
+          detail: `${weakestRestored.bState.condition}% Condition`,
+          tone:
+            weakestRestored.bState.condition < 65 ? 'text-[#C94B43]' : 'text-[#B3693B]',
+        }
+      : nextOffline
+      ? {
+          id: nextOffline.def.id,
+          name: nextOffline.def.shortName,
+          detail: nextOffline.unlock.unlocked
+            ? 'Offline · Ready to restore'
+            : `Locked · ${nextOffline.unlock.shortReason ?? 'Restore core systems'}`,
+          tone: nextOffline.unlock.unlocked ? 'text-[#B94F32]' : 'text-[#5E5955]',
+        }
+      : weakestRestored
+      ? {
+          id: weakestRestored.def.id,
+          name: weakestRestored.def.shortName,
+          detail: `${weakestRestored.bState.condition}% Condition (Nominal)`,
+          tone: 'text-[#396344]',
+        }
+      : null;
+
+  const greenhouseState = state.buildings.greenhouse;
+  const activeCropDef = state.greenhouseCrop
+    ? CROP_MAP[state.greenhouseCrop.cropId]
+    : null;
+  const cropStatusLabel =
+    !greenhouseState.restoredOnce || greenhouseState.status === 'inactive'
+      ? 'Offline'
+      : state.greenhouseCrop?.isMature
+      ? 'Ripe! Harvest now'
+      : state.greenhouseCrop && activeCropDef
+      ? `${activeCropDef.name} (${Math.round(state.greenhouseCrop.growthProgress * 10) / 10}/${state.greenhouseCrop.growthDaysRequired}d)`
+      : 'Empty · Plant seeds';
+
+  const lowestReserve = RESOURCE_ORDER.map((res) => {
+    const current = Math.round(state.resources[res]);
+    const cap = Math.max(1, state.capacities[res]);
+    const net = dailyRates.net[res].net;
+    return {
+      res,
+      label: RESOURCE_CONFIGS[res].label,
+      current,
+      cap,
+      net,
+      ratio: current / cap,
+    };
+  }).sort((a, b) => {
+    const aAlert = a.net < 0 || a.current < 25 ? 0 : 1;
+    const bAlert = b.net < 0 || b.current < 25 ? 0 : 1;
+    if (aAlert !== bAlert) return aAlert - bAlert;
+    return a.ratio - b.ratio;
+  })[0];
+
+  const horizonText =
+    state.day < 9
+      ? `Sol 9 · Big Solar Storm (${9 - state.day} sol${9 - state.day === 1 ? '' : 's'} left)`
+      : state.day < 20
+      ? `Sol 20 · Fast Sun Sparks (${20 - state.day} sol${20 - state.day === 1 ? '' : 's'} left)`
+      : state.day < 29
+      ? `Sol 29 · Giant Dust Storm (${29 - state.day} sol${29 - state.day === 1 ? '' : 's'} left)`
+      : state.day === 29
+      ? 'Sol 30 · Final Assessment Tomorrow'
+      : 'Sol 30 · Final Assessment Tonight';
 
   const renderCategoryIcon = (cat: BuildingCategory) => {
     if (cat === 'energy') return <Zap className="w-3.5 h-3.5 text-[#B94F32]" aria-hidden="true" />;
@@ -323,97 +453,293 @@ export function MajorTasksSidebar({
       {activeTab === 'tasks' ? (
         <div className="p-2.5 overflow-y-auto overscroll-contain space-y-2 flex-1 min-h-0">
           {availableItems.length === 0 ? (
-            <div className="mars-panel-light p-4 text-center space-y-2">
-              {state.crew.inShelter ? (
-                <>
-                  <Shield className="w-9 h-9 text-[#477C9B] mx-auto" aria-hidden="true" />
-                  <div className="text-xs font-extrabold text-[#292C2B]">
-                    Crew Safe in Shelter
+            <div className="space-y-2">
+              <div className="mars-panel-light p-3 text-center space-y-1">
+                {state.crew.inShelter ? (
+                  <>
+                    <Shield className="w-7 h-7 text-[#477C9B] mx-auto" aria-hidden="true" />
+                    <div className="text-xs font-extrabold text-[#292C2B]">
+                      Crew Safe in Shelter
+                    </div>
+                    <p className="text-[11px] font-semibold text-[#292C2B]/75 leading-snug">
+                      {outdoorHazard
+                        ? `${outdoorHazard.label} is outside. Stay safe, step outside at your own risk, or end the sol.`
+                        : 'Crew is sheltered. Step outside to check systems or end the sol.'}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-7 h-7 text-[#396344] mx-auto" aria-hidden="true" />
+                    <div className="text-xs font-extrabold text-[#292C2B]">
+                      {state.crew.energy < 20
+                        ? 'Crew Needs Rest'
+                        : state.hoursElapsed >= 22
+                        ? 'Ready to End Sol'
+                        : 'Quiet Sol · Outpost Monitor'}
+                    </div>
+                    <p className="text-[11px] font-semibold text-[#292C2B]/75 leading-snug">
+                      {state.crew.energy < 20
+                        ? 'Stamina is low. Rest the crew or end the sol to sleep.'
+                        : state.hoursElapsed >= 22
+                        ? 'Night cycle reached. End the sol to log supplies and start fresh.'
+                        : 'Urgent tasks are clear. Monitor systems, reserves, and crew readiness below.'}
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {/* Outpost Monitoring Card */}
+              <div className="mars-panel-light p-2.5 rounded-xl space-y-2 border-2 border-[#292C2B]/25">
+                <div className="flex items-center justify-between gap-1.5 text-[11px] font-extrabold text-[#292C2B]">
+                  <span className="flex items-center gap-1">
+                    <Activity className="w-3.5 h-3.5 text-[#477C9B]" aria-hidden="true" />
+                    <span>Outpost Status</span>
+                  </span>
+                  <span className="font-mono-tabular text-[10px] text-[#292C2B]/70">
+                    Sol {state.day}/30
+                  </span>
+                </div>
+
+                {/* Crew Readiness */}
+                <div className="p-2 rounded-lg bg-[#FAF0DC] border border-[#292C2B]/20 space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-extrabold text-[#292C2B]/75">
+                    <span>Crew Readiness</span>
+                    <span className="font-mono-tabular">
+                      HP {state.crew.condition}% · Stam {state.crew.energy}% · Rad {state.crew.radiationExposure}%
+                    </span>
                   </div>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-9 h-9 text-[#396344] mx-auto" aria-hidden="true" />
-                  <div className="text-xs font-extrabold text-[#292C2B]">
-                    {state.crew.energy < 20
-                      ? 'Crew Needs Rest'
-                      : state.hoursElapsed >= 22
-                      ? 'Ready to End Sol'
-                      : 'All Tasks Clear'}
+                  {outdoorHazard && !state.crew.inShelter && (
+                    <div className="flex items-center gap-1 text-[10px] font-extrabold text-[#C94B43]">
+                      <AlertTriangle className="w-3 h-3 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{outdoorHazard.label}: outdoor work risks HP</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Weakest / Next Facility (Click to Locate) */}
+                {focusBuildingMonitor && (
+                  <button
+                    type="button"
+                    onClick={() => onLocateBuilding(focusBuildingMonitor.id)}
+                    className="w-full text-left p-2 rounded-lg bg-[#FAF0DC] hover:bg-[#FFF8EB] border border-[#292C2B]/30 flex items-center justify-between gap-2 cursor-pointer transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-bold text-[#292C2B]/65">
+                        Facility Watch
+                      </div>
+                      <div className="text-[11px] font-extrabold text-[#292C2B] truncate">
+                        {focusBuildingMonitor.name}
+                      </div>
+                      <div className={`text-[10px] font-extrabold truncate ${focusBuildingMonitor.tone}`}>
+                        {focusBuildingMonitor.detail}
+                      </div>
+                    </div>
+                    <MapPin className="w-3.5 h-3.5 text-[#477C9B] shrink-0" aria-hidden="true" />
+                  </button>
+                )}
+
+                {/* Solar Dust & Greenhouse Crop Watch */}
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onLocateBuilding('solar_panels')}
+                    className="text-left p-2 rounded-lg bg-[#FAF0DC] hover:bg-[#FFF8EB] border border-[#292C2B]/25 cursor-pointer transition-colors min-w-0"
+                  >
+                    <div className="flex items-center gap-1 text-[10px] font-extrabold text-[#B94F32]">
+                      <Sun className="w-3 h-3 shrink-0" aria-hidden="true" />
+                      <span>Solar</span>
+                    </div>
+                    <div className="text-[10px] font-bold text-[#292C2B] truncate mt-0.5">
+                      Dust {state.buildings.solar_panels.dustLevel}%
+                    </div>
+                    <div
+                      className={`text-[10px] font-extrabold font-mono-tabular truncate ${
+                        energyStats.netDailyEnergy >= 0 ? 'text-[#396344]' : 'text-[#C94B43]'
+                      }`}
+                    >
+                      Net {energyStats.netDailyEnergy >= 0 ? '+' : ''}
+                      {energyStats.netDailyEnergy}/sol
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onLocateBuilding('greenhouse')}
+                    className="text-left p-2 rounded-lg bg-[#FAF0DC] hover:bg-[#FFF8EB] border border-[#292C2B]/25 cursor-pointer transition-colors min-w-0"
+                  >
+                    <div className="flex items-center gap-1 text-[10px] font-extrabold text-[#396344]">
+                      <Sprout className="w-3 h-3 shrink-0" aria-hidden="true" />
+                      <span>Crops</span>
+                    </div>
+                    <div className="text-[10px] font-bold text-[#292C2B] leading-tight mt-0.5 line-clamp-2">
+                      {cropStatusLabel}
+                    </div>
+                  </button>
+                </div>
+
+                {/* Lowest Reserve & Upcoming Horizon */}
+                <div className="p-2 rounded-lg bg-[#FAF0DC] border border-[#292C2B]/20 space-y-1 text-[10px]">
+                  {lowestReserve && (
+                    <div className="flex items-center justify-between gap-1 font-extrabold">
+                      <span className="text-[#292C2B]/70">Watch Reserve:</span>
+                      <span
+                        className={`font-mono-tabular ${
+                          lowestReserve.net < 0 || lowestReserve.current < 25
+                            ? 'text-[#C94B43]'
+                            : 'text-[#396344]'
+                        }`}
+                      >
+                        {lowestReserve.label} {lowestReserve.current}/{lowestReserve.cap} (
+                        {lowestReserve.net >= 0 ? `+${lowestReserve.net}` : lowestReserve.net}/sol)
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1 font-bold text-[#477C9B]">
+                    <CalendarClock className="w-3 h-3 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{horizonText}</span>
                   </div>
-                </>
-              )}
+                </div>
+
+                {/* Quick Crew & Sol Actions */}
+                <div className="space-y-1.5 pt-0.5">
+                  {state.crew.inShelter && onToggleShelter && (
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={onToggleShelter}
+                      className={`mars-btn w-full min-h-[40px] py-2 px-2.5 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                        outdoorHazard
+                          ? 'bg-[#C94B43] hover:bg-[#b23d35] text-[#FAF0DC]'
+                          : 'bg-[#718B78] hover:bg-[#5f7866] text-[#FAF0DC]'
+                      }`}
+                    >
+                      <Shield className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <span>
+                        {outdoorHazard ? 'Go Outside (Hazard Risk)' : 'Go Outside'}
+                      </span>
+                    </button>
+                  )}
+
+                  {canRest && onRestCrew && (
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={onRestCrew}
+                      className="mars-btn w-full min-h-[40px] py-2 px-2.5 bg-[#477C9B] hover:bg-[#3a6984] text-[#FAF0DC] text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <BedDouble className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <span>Rest Crew (+Stamina, 2h)</span>
+                    </button>
+                  )}
+
+                  {onEndDay && (
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={onEndDay}
+                      className="mars-btn w-full min-h-[40px] py-2 px-2.5 bg-[#B94F32] hover:bg-[#a64429] text-[#FAF0DC] text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Moon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <span>
+                        {state.day >= 30 ? 'Finish Sol 30' : `End Sol ${state.day}`}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           ) : (
-            availableItems.map((item) => {
-              const isSelected = state.selectedBuildingId === item.buildingId;
-              const badgeBg =
-                item.kind === 'ongoing'
-                  ? 'bg-[#477C9B] text-[#FAF0DC]'
-                  : item.kind === 'special'
-                  ? 'bg-[#718B78] text-[#FAF0DC]'
-                  : item.kind === 'major'
-                  ? 'bg-[#B94F32] text-[#FAF0DC]'
-                  : 'bg-[#E9B77B] text-[#292C2B]';
+            <>
+              {availableItems.map((item) => {
+                const isSelected = state.selectedBuildingId === item.buildingId;
+                const badgeBg =
+                  item.kind === 'ongoing'
+                    ? 'bg-[#477C9B] text-[#FAF0DC]'
+                    : item.kind === 'special'
+                    ? 'bg-[#718B78] text-[#FAF0DC]'
+                    : item.kind === 'major'
+                    ? 'bg-[#B94F32] text-[#FAF0DC]'
+                    : 'bg-[#E9B77B] text-[#292C2B]';
 
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onLocateBuilding(item.buildingId)}
-                  className={`w-full text-left p-2 rounded-xl border-2 bg-[#FAF0DC] hover:bg-[#FFF8EB] cursor-pointer flex items-center gap-2.5 transition-all ${
-                    isSelected
-                      ? 'border-[#B94F32] ring-2 ring-[#B94F32] shadow-[0_2px_0_#292C2B]'
-                      : 'border-[#292C2B]'
-                  }`}
-                >
-                  <div
-                    className={`w-9 h-9 rounded-xl border-2 border-[#292C2B] flex items-center justify-center shrink-0 ${badgeBg}`}
-                  >
-                    {item.kind === 'ongoing' ? (
-                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                    ) : item.kind === 'special' ? (
-                      <Sparkles className="w-4 h-4" aria-hidden="true" />
-                    ) : (
-                      <Wrench className="w-4 h-4" aria-hidden="true" />
-                    )}
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-extrabold text-[#292C2B] truncate">
-                      {item.taskName}
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-[11px] font-bold text-[#292C2B]/70">
-                      <span className="truncate">{item.buildingName}</span>
-                      {item.objectiveType && (
-                        <span
-                          className={`text-[10px] font-extrabold shrink-0 ${
-                            item.objectiveType === 'mandatory'
-                              ? 'text-[#B94F32]'
-                              : 'text-[#477C9B]'
-                          }`}
-                        >
-                          {item.objectiveType === 'mandatory' ? 'Mandatory' : 'Optional'}
-                        </span>
-                      )}
-                      {item.hours && (
-                        <span className="inline-flex items-center gap-0.5 font-mono-tabular shrink-0">
-                          <Clock className="w-3 h-3" aria-hidden="true" />
-                          {item.hours}h
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <MapPin
-                    className={`w-4 h-4 shrink-0 ${
-                      isSelected ? 'text-[#B94F32]' : 'text-[#292C2B]/45'
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onLocateBuilding(item.buildingId)}
+                    className={`w-full text-left p-2 rounded-xl border-2 bg-[#FAF0DC] hover:bg-[#FFF8EB] cursor-pointer flex items-center gap-2.5 transition-all ${
+                      isSelected
+                        ? 'border-[#B94F32] ring-2 ring-[#B94F32] shadow-[0_2px_0_#292C2B]'
+                        : 'border-[#292C2B]'
                     }`}
-                    aria-hidden="true"
-                  />
-                </button>
-              );
-            })
+                  >
+                    <div
+                      className={`w-9 h-9 rounded-xl border-2 border-[#292C2B] flex items-center justify-center shrink-0 ${badgeBg}`}
+                    >
+                      {item.kind === 'ongoing' ? (
+                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                      ) : item.kind === 'special' ? (
+                        <Sparkles className="w-4 h-4" aria-hidden="true" />
+                      ) : (
+                        <Wrench className="w-4 h-4" aria-hidden="true" />
+                      )}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-extrabold text-[#292C2B] truncate">
+                        {item.taskName}
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-2 text-[11px] font-bold text-[#292C2B]/70">
+                        <span className="truncate">{item.buildingName}</span>
+                        {item.objectiveType && (
+                          <span
+                            className={`text-[10px] font-extrabold shrink-0 ${
+                              item.objectiveType === 'mandatory'
+                                ? 'text-[#B94F32]'
+                                : 'text-[#477C9B]'
+                            }`}
+                          >
+                            {item.objectiveType === 'mandatory' ? 'Mandatory' : 'Optional'}
+                          </span>
+                        )}
+                        {item.hours && (
+                          <span className="inline-flex items-center gap-0.5 font-mono-tabular shrink-0">
+                            <Clock className="w-3 h-3" aria-hidden="true" />
+                            {item.hours}h
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <MapPin
+                      className={`w-4 h-4 shrink-0 ${
+                        isSelected ? 'text-[#B94F32]' : 'text-[#292C2B]/45'
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                );
+              })}
+
+              {/* Compact Horizon & Facility Watch Footer */}
+              <div className="mars-panel-light p-2 rounded-xl border border-[#292C2B]/25 space-y-1 text-[10px]">
+                <div className="flex items-center gap-1 font-extrabold text-[#477C9B]">
+                  <CalendarClock className="w-3 h-3 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{horizonText}</span>
+                </div>
+                {focusBuildingMonitor && (
+                  <button
+                    type="button"
+                    onClick={() => onLocateBuilding(focusBuildingMonitor.id)}
+                    className="w-full text-left flex items-center justify-between gap-1 font-bold text-[#292C2B]/80 hover:text-[#292C2B] cursor-pointer"
+                  >
+                    <span className="truncate">
+                      Watch: {focusBuildingMonitor.name} ({focusBuildingMonitor.detail})
+                    </span>
+                    <MapPin className="w-3 h-3 shrink-0 text-[#477C9B]" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </>
           )}
         </div>
       ) : (
