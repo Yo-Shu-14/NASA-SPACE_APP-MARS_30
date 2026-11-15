@@ -209,6 +209,9 @@ class GameStore {
       if (restored.screen === 'PLAYING') {
         this.startIdleTimeTicker();
         if (
+          !restored.lastDaySummary &&
+          !restored.gilDayHint &&
+          !isMajorEventCutsceneActive(restored) &&
           restored.activeEvent &&
           !restored.activeEvent.resolved &&
           restored.activeEvent.animationRemaining > 0
@@ -378,7 +381,7 @@ class GameStore {
     this.eventAnimTimer = globalThis.setInterval(() => {
       const cur = this.state;
       if (cur.screen !== 'PLAYING' || cur.sleepPhase === 'sleeping') return;
-      if (isMajorEventCutsceneActive(cur)) {
+      if (cur.lastDaySummary || cur.gilDayHint || isMajorEventCutsceneActive(cur)) {
         this.stopEventAnimationTicker();
         return;
       }
@@ -635,6 +638,9 @@ class GameStore {
     if (restored.screen === 'PLAYING') {
       this.startIdleTimeTicker();
       if (
+        !restored.lastDaySummary &&
+        !restored.gilDayHint &&
+        !isMajorEventCutsceneActive(restored) &&
         restored.activeEvent &&
         !restored.activeEvent.resolved &&
         restored.activeEvent.animationRemaining > 0
@@ -1355,10 +1361,21 @@ class GameStore {
       }
     }
 
+    const nextActiveEvent =
+      nextInShelter &&
+      baseState.activeEvent &&
+      isShelterRequiredEvent(baseState.activeEvent)
+        ? {
+            ...baseState.activeEvent,
+            shelterUsed: true,
+          }
+        : baseState.activeEvent;
+
     this.setState({
       ...baseState,
       pendingAction: null,
       ongoingTask: null,
+      activeEvent: nextActiveEvent,
       crew: {
         ...baseState.crew,
         inShelter: nextInShelter,
@@ -1492,6 +1509,14 @@ class GameStore {
         cutsceneCompleted: true,
       },
     });
+    if (
+      !this.state.lastDaySummary &&
+      !this.state.gilDayHint &&
+      !this.state.activeEvent.resolved &&
+      this.state.activeEvent.animationRemaining > 0
+    ) {
+      this.startEventAnimationTicker();
+    }
   }
 
   public acknowledgeActiveEvent() {
@@ -1530,9 +1555,14 @@ class GameStore {
     ) {
       return;
     }
-    if (!this.state.activeEvent || this.state.activeEvent.resolved) return;
+    if (
+      !this.state.activeEvent ||
+      this.state.activeEvent.resolved ||
+      this.state.activeEvent.selectedChoiceId
+    ) {
+      return;
+    }
 
-    this.stopEventAnimationTicker();
     const prevCondition = this.state.crew.condition;
     const { nextState, buildingImpacts } = applyMajorEventDecision(choiceId, this.state);
     const hazardCheck = clearMitigatedLingeringHazards(
@@ -1592,7 +1622,12 @@ class GameStore {
       ...this.state,
       lastDaySummary: null,
     };
-    const gilDayHint = getPostDaySummaryGilHint(nextState, prevSummary);
+    const hasActiveEventToday = Boolean(
+      nextState.activeEvent && !nextState.activeEvent.resolved
+    );
+    const gilDayHint = hasActiveEventToday
+      ? null
+      : getPostDaySummaryGilHint(nextState, prevSummary);
     const nextAnnouncementDays = gilDayHint
       ? Array.from(new Set([...(nextState.gilAnnouncementDays ?? []), nextState.day]))
       : nextState.gilAnnouncementDays ?? [];
@@ -1602,6 +1637,15 @@ class GameStore {
       gilDayHint,
       gilAnnouncementDays: nextAnnouncementDays,
     });
+    if (
+      !gilDayHint &&
+      !isMajorEventCutsceneActive(this.state) &&
+      this.state.activeEvent &&
+      !this.state.activeEvent.resolved &&
+      this.state.activeEvent.animationRemaining > 0
+    ) {
+      this.startEventAnimationTicker();
+    }
   }
 
   public dismissGilDayHint() {
@@ -1611,6 +1655,14 @@ class GameStore {
       ...this.state,
       gilDayHint: null,
     });
+    if (
+      !isMajorEventCutsceneActive(this.state) &&
+      this.state.activeEvent &&
+      !this.state.activeEvent.resolved &&
+      this.state.activeEvent.animationRemaining > 0
+    ) {
+      this.startEventAnimationTicker();
+    }
   }
 
   public endDay() {
@@ -1654,7 +1706,8 @@ class GameStore {
     if (
       this.state.crew.inShelter &&
       isShelterRequiredEvent(this.state.activeEvent) &&
-      isEventOfficiallyActive(this.state.activeEvent)
+      isEventOfficiallyActive(this.state.activeEvent) &&
+      (this.state.activeEvent?.animationRemaining ?? 0) > 0
     ) {
       return;
     }
@@ -2130,9 +2183,6 @@ class GameStore {
       if (unlockedAtDawn.length > 0) {
         this.emitFeedback({ type: 'systems_unlocked', buildings: unlockedAtDawn });
       }
-    }
-    if (nextEvent && nextEvent.animationRemaining > 0) {
-      this.startEventAnimationTicker();
     }
   }
 }

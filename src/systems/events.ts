@@ -259,15 +259,17 @@ export function isEventOfficiallyActive(activeEvent?: ActiveEvent | null): boole
 }
 
 export function isMajorEventCutsceneActive(
-  state: Pick<GameState, 'screen' | 'sleepPhase' | 'activeEvent'>
+  state: Pick<GameState, 'screen' | 'sleepPhase' | 'activeEvent'> & {
+    lastDaySummary?: GameState['lastDaySummary'];
+  }
 ): boolean {
   const evt = state.activeEvent;
   return Boolean(
     state.screen === 'PLAYING' &&
       state.sleepPhase !== 'sleeping' &&
+      !state.lastDaySummary &&
       evt &&
       !evt.resolved &&
-      evt.animationRemaining <= 0 &&
       !evt.cutsceneCompleted &&
       evt.definition.cutscene &&
       evt.definition.cutscene.length > 0
@@ -1085,7 +1087,9 @@ export function applyMajorEventDecision(
   }
   const nextResources = clampResourcesToCapacity(nextRawResources, state.capacities);
 
-  const decisionShelteredCrew = Boolean(fx.setInShelter);
+  const shelterOperational = nextBuildings.radiation_shelter.status !== 'inactive';
+  const decisionShelteredCrew = Boolean(fx.setInShelter && shelterOperational);
+  const nextInShelter = decisionShelteredCrew ? true : state.crew.inShelter;
 
   const nextCrew: CrewState = {
     ...state.crew,
@@ -1095,9 +1099,7 @@ export function applyMajorEventDecision(
       0,
       Math.min(100, state.crew.radiationExposure + (fx.crewRadiationDelta ?? 0))
     ),
-    // Resolving a major event decision completes the emergency phase and returns
-    // crew to active duty so outpost repairs and building controls are accessible.
-    inShelter: false,
+    inShelter: nextInShelter,
   };
 
   const addedHours = fx.timeHoursCost ?? 0;
@@ -1153,11 +1155,9 @@ export function applyMajorEventDecision(
     modifiers: nextModifiers,
     activeEvent: {
       ...activeEvent,
-      resolved: true,
-      animationRemaining: 0,
       selectedChoiceId: choice.id,
       shelterUsed: Boolean(
-        activeEvent.shelterUsed || decisionShelteredCrew || state.crew.inShelter
+        activeEvent.shelterUsed || decisionShelteredCrew || nextInShelter
       ),
       mitigationSummary: choice.title,
     },
@@ -1283,7 +1283,6 @@ export function resolveEventAtEndOfDay(params: {
 
   const cutsceneUnfinished = Boolean(
     !activeEvent.resolved &&
-      activeEvent.animationRemaining <= 0 &&
       !activeEvent.cutsceneCompleted &&
       def.cutscene &&
       def.cutscene.length > 0
@@ -1350,7 +1349,10 @@ export interface OutdoorHazardSummary {
 }
 
 export function getActiveOutdoorHazardSummary(
-  state: Pick<GameState, 'screen' | 'sleepPhase' | 'activeEvent' | 'lingeringHazards'>
+  state: Pick<
+    GameState,
+    'screen' | 'sleepPhase' | 'activeEvent' | 'lingeringHazards' | 'lastDaySummary'
+  >
 ): OutdoorHazardSummary | null {
   if (isMajorEventCutsceneActive(state)) {
     return null;

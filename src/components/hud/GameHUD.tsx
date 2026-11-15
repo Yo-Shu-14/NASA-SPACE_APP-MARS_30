@@ -55,6 +55,7 @@ interface GameHUDProps {
   onToggleLeftDrawer: () => void;
   onRestCrew: () => void;
   onSelectBuilding: (id: GameState['selectedBuildingId']) => void;
+  onSelectEventDecision?: (choiceId: string) => void;
 }
 
 const SHORTAGE_MESSAGE: Record<
@@ -75,6 +76,7 @@ export function GameHUD({
   onToggleLeftDrawer,
   onRestCrew,
   onSelectBuilding,
+  onSelectEventDecision,
 }: GameHUDProps) {
   const prevResourcesRef = useRef<ResourceAmounts>(state.resources);
   const prevHealthRef = useRef<number>(state.crew.condition);
@@ -88,6 +90,29 @@ export function GameHUD({
   const [crewHealthDelta, setCrewHealthDelta] = useState<{ delta: number; seq: number } | null>(
     null
   );
+  const [tacticalOrdersOpen, setTacticalOrdersOpen] = useState(false);
+
+  const visibleActiveEvent =
+    state.activeEvent && !state.activeEvent.resolved && !state.lastDaySummary
+      ? state.activeEvent
+      : null;
+
+  useEffect(() => {
+    if (
+      !visibleActiveEvent ||
+      visibleActiveEvent.selectedChoiceId ||
+      isMajorEventCutsceneActive(state)
+    ) {
+      setTacticalOrdersOpen(false);
+    }
+  }, [
+    visibleActiveEvent?.dayTriggered,
+    visibleActiveEvent?.definition.id,
+    visibleActiveEvent?.selectedChoiceId,
+    state.lastDaySummary,
+    state.screen,
+    state.sleepPhase,
+  ]);
 
   useEffect(() => {
     const prev = prevResourcesRef.current;
@@ -629,12 +654,12 @@ export function GameHUD({
 
       {/* Live Event Animation Banner, Sleep Banner, Crew Task Banner, Lingering Hazard OR Actionable Alert Button */}
       {(shortages.length > 0 ||
-        (state.activeEvent && !state.activeEvent.resolved) ||
+        Boolean(visibleActiveEvent) ||
         lingeringHazards.length > 0 ||
         state.crew.inShelter ||
         isSleepBusy ||
         state.pendingAction) && (
-        <div className="w-full flex justify-center pointer-events-none">
+        <div className="w-full flex flex-col items-center gap-1.5 pointer-events-none">
           {state.sleepPhase === 'returning' ? (
             <div className="mars-panel pointer-events-auto px-3 py-1.5 lg:px-4 lg:py-2 rounded-xl lg:rounded-2xl bg-[#FAF0DC] flex items-center gap-2.5 lg:gap-3 max-w-xs w-full">
               <div className="w-7 h-7 lg:w-9 lg:h-9 rounded-lg lg:rounded-xl bg-[#477C9B] border-2 border-[#292C2B] flex items-center justify-center shrink-0 text-[#FAF0DC]">
@@ -646,11 +671,7 @@ export function GameHUD({
               </div>
               {isWaitingOutRadiationStorm ? (
                 <div className="flex-1 min-w-0 flex items-center justify-between gap-2 text-[11px] lg:text-xs font-extrabold text-[#292C2B]">
-                  <span className="truncate">
-                    {state.activeEvent && state.activeEvent.animationRemaining > 0
-                      ? 'Sheltered — Storm Passing...'
-                      : 'Pick Storm Plan...'}
-                  </span>
+                  <span className="truncate">Sheltered — Storm Passing...</span>
                   {state.activeEvent && state.activeEvent.animationRemaining > 0 && (
                     <span className="font-mono-tabular px-1.5 py-0.5 rounded bg-[#477C9B] text-[#FAF0DC] text-[10px] lg:text-[11px] shrink-0">
                       {Math.ceil(state.activeEvent.animationRemaining)}s
@@ -732,60 +753,92 @@ export function GameHUD({
                 )}
               </div>
             </button>
-          ) : state.activeEvent && !state.activeEvent.resolved && state.activeEvent.animationRemaining > 0 ? (
+          ) : visibleActiveEvent && visibleActiveEvent.animationRemaining > 0 ? (
             <div
-              className={`mars-panel pointer-events-auto px-2.5 py-1.5 lg:px-3.5 lg:py-2 rounded-xl lg:rounded-2xl flex items-center gap-2 lg:gap-3 max-w-md w-full ${
-                state.activeEvent.definition.severity === 'minor'
+              className={`mars-panel pointer-events-auto px-2.5 py-1.5 lg:px-3.5 lg:py-2 rounded-xl lg:rounded-2xl flex items-center gap-2 lg:gap-3 max-w-lg w-full ${
+                visibleActiveEvent.definition.severity === 'minor'
                   ? 'bg-[#FFF5DF]'
                   : 'bg-[#FDE8E6]'
               }`}
             >
-              <div
-                className={`w-7 h-7 lg:w-9 lg:h-9 rounded-lg lg:rounded-xl border-2 border-[#292C2B] flex items-center justify-center shrink-0 ${
-                  state.activeEvent.definition.severity === 'minor'
+              <button
+                type="button"
+                onClick={() =>
+                  onSelectBuilding(
+                    isShelterRequiredEvent(visibleActiveEvent) && !state.crew.inShelter
+                      ? 'radiation_shelter'
+                      : visibleActiveEvent.definition.targetBuildings?.[0] ?? 'solar_panels'
+                  )
+                }
+                title="Focus affected outpost facility"
+                className={`w-7 h-7 lg:w-9 lg:h-9 rounded-lg lg:rounded-xl border-2 border-[#292C2B] flex items-center justify-center shrink-0 cursor-pointer hover:brightness-105 ${
+                  visibleActiveEvent.definition.severity === 'minor'
                     ? 'bg-[#D77B4A]'
                     : 'bg-[#C94B43]'
                 }`}
               >
                 <EventIcon
-                  phenomenon={state.activeEvent.definition.phenomenon}
+                  phenomenon={visibleActiveEvent.definition.phenomenon}
                   className="w-5 h-5 lg:w-6 lg:h-6"
                 />
-              </div>
+              </button>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2 text-[11px] lg:text-xs font-extrabold text-[#292C2B]">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span
                       className={`px-1.5 py-0.5 rounded border border-[#292C2B] text-[10px] font-black uppercase tracking-wide leading-none shrink-0 ${
-                        state.activeEvent.definition.severity === 'super_major'
+                        visibleActiveEvent.definition.severity === 'super_major'
                           ? 'bg-[#292C2B] text-[#F4C552]'
-                          : state.activeEvent.definition.severity === 'major'
+                          : visibleActiveEvent.definition.severity === 'major'
                           ? 'bg-[#C94B43] text-[#FAF0DC]'
                           : 'bg-[#F4C552] text-[#292C2B]'
                       }`}
                     >
-                      {state.activeEvent.definition.severity === 'super_major'
+                      {visibleActiveEvent.definition.severity === 'super_major'
                         ? 'Super'
-                        : state.activeEvent.definition.severity}
+                        : visibleActiveEvent.definition.severity}
                     </span>
-                    <span className="truncate">{state.activeEvent.definition.title}</span>
+                    <span className="truncate">{visibleActiveEvent.definition.title}</span>
                   </div>
-                  <span
-                    className={`font-mono-tabular px-1.5 py-0.5 rounded text-[#FAF0DC] text-[10px] lg:text-[11px] shrink-0 ${
-                      state.activeEvent.definition.severity === 'minor'
-                        ? 'bg-[#B94F32]'
-                        : 'bg-[#C94B43]'
-                    }`}
-                  >
-                    {Math.ceil(state.activeEvent.animationRemaining)}s
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {visibleActiveEvent.selectedChoiceId ? (
+                      <span className="hidden sm:inline-flex px-1.5 py-0.5 rounded border border-[#292C2B] bg-[#DDE8D6] text-[#292C2B] text-[10px] font-black max-w-[140px] truncate">
+                        Order: {visibleActiveEvent.mitigationSummary ?? 'Active'}
+                      </span>
+                    ) : (
+                      visibleActiveEvent.definition.choices &&
+                      visibleActiveEvent.definition.choices.length > 0 &&
+                      onSelectEventDecision && (
+                        <button
+                          type="button"
+                          onClick={() => setTacticalOrdersOpen((prev) => !prev)}
+                          className={`px-2 py-0.5 rounded border border-[#292C2B] text-[10px] font-black uppercase tracking-wide cursor-pointer ${
+                            tacticalOrdersOpen
+                              ? 'bg-[#292C2B] text-[#F4C552]'
+                              : 'bg-[#F4C552] hover:bg-[#F9D779] text-[#292C2B]'
+                          }`}
+                        >
+                          Tactical Orders
+                        </button>
+                      )
+                    )}
+                    <span
+                      className={`font-mono-tabular px-1.5 py-0.5 rounded text-[#FAF0DC] text-[10px] lg:text-[11px] shrink-0 ${
+                        visibleActiveEvent.definition.severity === 'minor'
+                          ? 'bg-[#B94F32]'
+                          : 'bg-[#C94B43]'
+                      }`}
+                    >
+                      {Math.ceil(visibleActiveEvent.animationRemaining)}s
+                    </span>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between gap-2 mt-1">
                   <span className="text-[10px] font-bold text-[#292C2B]/90 truncate">
-                    {isShelterRequiredEvent(state.activeEvent) && !state.crew.inShelter
-                      ? 'Hazard risk: Outdoor work hurts HP & +Rad — Enter Shelter!'
-                      : (state.activeEvent.definition.targetBuildings ?? []).length > 0
-                      ? `Outdoor work risks Crew HP · At risk: ${(state.activeEvent.definition.targetBuildings ?? [])
+                    {isShelterRequiredEvent(visibleActiveEvent) && !state.crew.inShelter
+                      ? 'Hazard risk: Outdoor work hurts HP & +Rad — Enter Shelter or work at risk!'
+                      : (visibleActiveEvent.definition.targetBuildings ?? []).length > 0
+                      ? `Outdoor work risks Crew HP · At risk: ${(visibleActiveEvent.definition.targetBuildings ?? [])
                           .slice(0, 2)
                           .map((bId) => BUILDING_DEFINITIONS[bId].shortName)
                           .join(', ')}`
@@ -795,7 +848,7 @@ export function GameHUD({
                 <div className="h-1.5 w-full bg-[#F1D8A8] border border-[#292C2B] rounded-full overflow-hidden mt-1">
                   <div
                     className={`h-full transition-all duration-200 ${
-                      state.activeEvent.definition.severity === 'minor'
+                      visibleActiveEvent.definition.severity === 'minor'
                         ? 'bg-[#D77B4A]'
                         : 'bg-[#C94B43]'
                     }`}
@@ -804,9 +857,9 @@ export function GameHUD({
                         100,
                         Math.max(
                           0,
-                          ((state.activeEvent.animationDuration -
-                            state.activeEvent.animationRemaining) /
-                            Math.max(1, state.activeEvent.animationDuration)) *
+                          ((visibleActiveEvent.animationDuration -
+                            visibleActiveEvent.animationRemaining) /
+                            Math.max(1, visibleActiveEvent.animationDuration)) *
                             100
                         )
                       )}%`,
@@ -816,46 +869,98 @@ export function GameHUD({
               </div>
             </div>
           ) : state.crew.inShelter ? (
-            <button
-              type="button"
-              onClick={() => onSelectBuilding('radiation_shelter')}
-              className="mars-btn pointer-events-auto max-w-full px-2.5 lg:px-3.5 py-1 lg:py-1.5 bg-[#477C9B] text-[#FAF0DC] text-[11px] lg:text-xs font-extrabold flex items-center justify-center gap-1.5 lg:gap-2 cursor-pointer text-center leading-tight lg:whitespace-nowrap"
-            >
-              <Shield className="w-3.5 h-3.5 lg:w-4 lg:h-4 shrink-0" aria-hidden="true" />
-              <span>
-                {isShelterRequiredEvent(state.activeEvent) && isEventOfficiallyActive(state.activeEvent)
-                  ? 'In Shelter (Safe) — Tap to Exit'
-                  : 'In Shelter — Tap to Go Outside'}
-              </span>
-            </button>
-          ) : state.activeEvent && !state.activeEvent.resolved ? (
-            <button
-              type="button"
-              onClick={() =>
-                onSelectBuilding(
-                  isShelterRequiredEvent(state.activeEvent)
-                    ? 'radiation_shelter'
-                    : state.activeEvent?.definition.targetBuildings?.[0] ?? 'solar_panels'
+            <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-full pointer-events-none">
+              <button
+                type="button"
+                onClick={() => onSelectBuilding('radiation_shelter')}
+                className="mars-btn pointer-events-auto max-w-full px-2.5 lg:px-3.5 py-1 lg:py-1.5 bg-[#477C9B] text-[#FAF0DC] text-[11px] lg:text-xs font-extrabold flex items-center justify-center gap-1.5 lg:gap-2 cursor-pointer text-center leading-tight lg:whitespace-nowrap"
+              >
+                <Shield className="w-3.5 h-3.5 lg:w-4 lg:h-4 shrink-0" aria-hidden="true" />
+                <span>
+                  {isShelterRequiredEvent(visibleActiveEvent) && isEventOfficiallyActive(visibleActiveEvent)
+                    ? 'In Shelter (Safe) — Tap to Exit'
+                    : 'In Shelter — Tap to Go Outside'}
+                </span>
+              </button>
+              {visibleActiveEvent &&
+                visibleActiveEvent.definition.choices &&
+                visibleActiveEvent.definition.choices.length > 0 &&
+                !visibleActiveEvent.selectedChoiceId &&
+                onSelectEventDecision && (
+                  <button
+                    type="button"
+                    onClick={() => setTacticalOrdersOpen((prev) => !prev)}
+                    className={`mars-btn pointer-events-auto px-2.5 lg:px-3 py-1 lg:py-1.5 text-[11px] lg:text-xs font-extrabold flex items-center gap-1.5 cursor-pointer ${
+                      tacticalOrdersOpen
+                        ? 'bg-[#292C2B] text-[#F4C552]'
+                        : 'bg-[#F4C552] hover:bg-[#F9D779] text-[#292C2B]'
+                    }`}
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <span>Tactical Orders</span>
+                  </button>
+                )}
+              {visibleActiveEvent?.selectedChoiceId && (
+                <span className="mars-panel pointer-events-auto px-2.5 py-1 rounded-xl bg-[#DDE8D6] text-[#292C2B] text-[10px] lg:text-[11px] font-extrabold">
+                  Order: {visibleActiveEvent.mitigationSummary ?? 'Active'}
+                </span>
+              )}
+            </div>
+          ) : visibleActiveEvent ? (
+            <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-full pointer-events-none">
+              <button
+                type="button"
+                onClick={() =>
+                  onSelectBuilding(
+                    isShelterRequiredEvent(visibleActiveEvent)
+                      ? 'radiation_shelter'
+                      : visibleActiveEvent.definition.targetBuildings?.[0] ?? 'solar_panels'
+                  )
+                }
+                className={`mars-btn pointer-events-auto max-w-full px-2.5 lg:px-3.5 py-1 lg:py-1.5 text-[11px] lg:text-xs font-extrabold flex items-center justify-center gap-1.5 lg:gap-2 cursor-pointer text-center leading-tight lg:whitespace-nowrap ${
+                  visibleActiveEvent.definition.severity === 'minor'
+                    ? 'bg-[#D77B4A] text-[#FAF0DC]'
+                    : 'bg-[#C94B43] text-[#FAF0DC]'
+                }`}
+              >
+                <EventIcon
+                  phenomenon={visibleActiveEvent.definition.phenomenon}
+                  className="w-4 h-4 lg:w-5 lg:h-5 shrink-0"
+                />
+                <span className="px-1.5 py-0.5 rounded bg-[#292C2B] text-[#F4C552] text-[10px] font-black uppercase tracking-wide leading-none shrink-0">
+                  {visibleActiveEvent.definition.severity === 'super_major'
+                    ? 'Super'
+                    : visibleActiveEvent.definition.severity}
+                </span>
+                <span>
+                  {isShelterRequiredEvent(visibleActiveEvent) && !state.crew.inShelter
+                    ? `${visibleActiveEvent.definition.title} — Enter Shelter`
+                    : visibleActiveEvent.definition.title}
+                </span>
+              </button>
+              {visibleActiveEvent.selectedChoiceId ? (
+                <span className="mars-panel pointer-events-auto px-2.5 py-1 rounded-xl bg-[#DDE8D6] text-[#292C2B] text-[10px] lg:text-[11px] font-extrabold">
+                  Order: {visibleActiveEvent.mitigationSummary ?? 'Active'}
+                </span>
+              ) : (
+                visibleActiveEvent.definition.choices &&
+                visibleActiveEvent.definition.choices.length > 0 &&
+                onSelectEventDecision && (
+                  <button
+                    type="button"
+                    onClick={() => setTacticalOrdersOpen((prev) => !prev)}
+                    className={`mars-btn pointer-events-auto px-2.5 lg:px-3 py-1 lg:py-1.5 text-[11px] lg:text-xs font-extrabold flex items-center gap-1.5 cursor-pointer ${
+                      tacticalOrdersOpen
+                        ? 'bg-[#292C2B] text-[#F4C552]'
+                        : 'bg-[#F4C552] hover:bg-[#F9D779] text-[#292C2B]'
+                    }`}
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <span>Tactical Orders</span>
+                  </button>
                 )
-              }
-              className={`mars-btn pointer-events-auto max-w-full px-2.5 lg:px-3.5 py-1 lg:py-1.5 text-[11px] lg:text-xs font-extrabold flex items-center justify-center gap-1.5 lg:gap-2 cursor-pointer text-center leading-tight lg:whitespace-nowrap ${
-                state.activeEvent.definition.severity === 'minor'
-                  ? 'bg-[#D77B4A] text-[#FAF0DC]'
-                  : 'bg-[#C94B43] text-[#FAF0DC]'
-              }`}
-            >
-              <EventIcon phenomenon={state.activeEvent.definition.phenomenon} className="w-4 h-4 lg:w-5 lg:h-5 shrink-0" />
-              <span className="px-1.5 py-0.5 rounded bg-[#292C2B] text-[#F4C552] text-[10px] font-black uppercase tracking-wide leading-none shrink-0">
-                {state.activeEvent.definition.severity === 'super_major'
-                  ? 'Super'
-                  : state.activeEvent.definition.severity}
-              </span>
-              <span>
-                {isShelterRequiredEvent(state.activeEvent) && !state.crew.inShelter
-                  ? `${state.activeEvent.definition.title} — Enter Shelter`
-                  : state.activeEvent.definition.title}
-              </span>
-            </button>
+              )}
+            </div>
           ) : primaryLingeringHazard ? (
             <button
               type="button"
@@ -886,6 +991,64 @@ export function GameHUD({
               <span>{SHORTAGE_MESSAGE[shortages[0]].text}</span>
             </button>
           )}
+
+          {tacticalOrdersOpen &&
+            visibleActiveEvent &&
+            !visibleActiveEvent.selectedChoiceId &&
+            visibleActiveEvent.definition.choices &&
+            visibleActiveEvent.definition.choices.length > 0 &&
+            onSelectEventDecision && (
+              <div className="mars-panel pointer-events-auto max-w-lg w-full rounded-2xl bg-[#FFF8EB] p-2.5 lg:p-3 text-left shadow-xl">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="min-w-0">
+                    <div className="text-[11px] lg:text-xs font-extrabold text-[#292C2B]">
+                      Tactical Orders — {visibleActiveEvent.definition.title}
+                    </div>
+                    <div className="text-[10px] lg:text-[11px] font-bold text-[#292C2B]/75">
+                      Optional storm protocol — outpost repairs, tasks, and shelter remain unlocked.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTacticalOrdersOpen(false)}
+                    aria-label="Close tactical orders"
+                    className="w-6 h-6 rounded-lg border-2 border-[#292C2B] bg-[#FAF0DC] hover:bg-[#F4C552] flex items-center justify-center shrink-0 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-1.5">
+                  {visibleActiveEvent.definition.choices.map((choice) => (
+                    <button
+                      key={choice.id}
+                      type="button"
+                      onClick={() => {
+                        setTacticalOrdersOpen(false);
+                        onSelectEventDecision(choice.id);
+                      }}
+                      className="w-full text-left p-2 rounded-xl border-2 border-[#292C2B] bg-[#FAF0DC] hover:bg-[#F4C552]/35 transition-colors cursor-pointer"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-1.5">
+                        <span className="text-[11px] lg:text-xs font-extrabold text-[#292C2B]">
+                          {choice.title}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="px-1.5 py-0.5 rounded bg-[#DDE8D6] border border-[#292C2B] text-[#292C2B] text-[9px] font-black uppercase tracking-wide">
+                            {choice.benefitTag}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded bg-[#292C2B] text-[#F4C552] text-[9px] font-black uppercase tracking-wide">
+                            {choice.riskTag}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-[10px] font-bold text-[#292C2B]/80 mt-0.5">
+                        {choice.shortDesc}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
         </div>
       )}
     </header>
@@ -907,7 +1070,8 @@ export function EndDayDock({
     isReturning &&
     state.crew.inShelter &&
     isShelterRequiredEvent(state.activeEvent) &&
-    isEventOfficiallyActive(state.activeEvent);
+    isEventOfficiallyActive(state.activeEvent) &&
+    (state.activeEvent?.animationRemaining ?? 0) > 0;
   const isSleeping =
     state.sleepPhase === 'sleeping' ||
     (state.sleepPhase === 'idle' && state.sleepingRemaining > 0);

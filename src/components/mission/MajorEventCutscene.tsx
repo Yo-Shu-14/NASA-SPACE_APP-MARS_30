@@ -136,10 +136,20 @@ export function MajorEventCutscene({
 
   const isSuperMajor = event.definition.severity === 'super_major';
   const accentColor = isSuperMajor ? '#C94B43' : '#B94F32';
+  const targetBuildings = event.definition.targetBuildings ?? [];
+  const vignetteColor =
+    event.definition.phenomenon === 'solar_energetic_particles'
+      ? 'rgba(192, 132, 252, 0.28)'
+      : event.definition.phenomenon === 'global_dust_storm'
+      ? 'rgba(215, 123, 74, 0.34)'
+      : 'rgba(201, 75, 67, 0.30)';
 
   return (
     <div
       className="fixed inset-0 z-30 pointer-events-none flex flex-col justify-between px-3 sm:p-5 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+      style={{
+        boxShadow: `inset 0 0 110px ${vignetteColor}`,
+      }}
       role="dialog"
       aria-modal="true"
       aria-label={`${event.definition.title} Crew Briefing`}
@@ -158,16 +168,21 @@ export function MajorEventCutscene({
           </div>
           <div className="min-w-0">
             <div className="text-[10px] font-extrabold uppercase tracking-wide text-[#B94F32] truncate">
-              Sol {event.dayTriggered} · Briefing
+              Sol {event.dayTriggered} · Incoming Event Briefing
             </div>
             <div className="text-xs sm:text-sm font-extrabold text-[#292C2B] truncate">
               {event.definition.title}
             </div>
           </div>
-          {event.definition.radiationLevel && (
+          {event.definition.radiationLevel ? (
             <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#C94B43] text-[#FAF0DC] border border-[#292C2B] text-[10px] font-extrabold shrink-0">
               <ShieldAlert className="w-3 h-3" aria-hidden="true" />
-              <span>RAD ALERT</span>
+              <span>RAD HAZARD</span>
+            </span>
+          ) : (
+            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#D77B4A] text-[#FAF0DC] border border-[#292C2B] text-[10px] font-extrabold shrink-0">
+              <ShieldAlert className="w-3 h-3" aria-hidden="true" />
+              <span>STORM RISK</span>
             </span>
           )}
         </div>
@@ -179,7 +194,7 @@ export function MajorEventCutscene({
         >
           <FastForward className="w-3.5 h-3.5 text-[#B94F32]" aria-hidden="true" />
           <span className="sm:hidden">Skip</span>
-          <span className="hidden sm:inline">Skip to Choices</span>
+          <span className="hidden sm:inline">Jump to Outpost</span>
         </button>
       </div>
 
@@ -199,7 +214,7 @@ export function MajorEventCutscene({
             ))}
           </div>
 
-          <div className="p-3 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3.5 max-h-[54dvh] overflow-y-auto overscroll-contain sm:max-h-none sm:overflow-visible">
+          <div className="p-3 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3.5 max-h-[56dvh] overflow-y-auto overscroll-contain sm:max-h-none sm:overflow-visible">
             {/* Character Portrait synced to exact Phaser astronaut palette */}
             <div className="flex items-center gap-3 sm:block shrink-0">
               <div
@@ -227,7 +242,7 @@ export function MajorEventCutscene({
               </div>
             </div>
 
-            {/* Dialogue Copy & Outpost Target Tag */}
+            {/* Dialogue Copy & Outpost Impact Tag Strip */}
             <div className="flex-1 min-w-0 space-y-1.5">
               <div className="hidden sm:flex flex-wrap items-center gap-2">
                 <span className="text-sm font-extrabold text-[#292C2B]">
@@ -246,6 +261,30 @@ export function MajorEventCutscene({
               <p className="text-xs sm:text-base font-extrabold text-[#292C2B] leading-snug">
                 “{formattedLine}”
               </p>
+
+              {/* Impact Telemetry Strip */}
+              <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                <span className="px-2 py-0.5 rounded-md bg-[#FDE8E6] border border-[#C94B43]/60 text-[10px] font-extrabold text-[#8C2F1C]">
+                  {event.definition.radiationLevel
+                    ? 'Outdoors: -HP & +Radiation'
+                    : 'Outdoors: -HP Storm Strain'}
+                </span>
+                {targetBuildings.slice(0, 4).map((bId) => {
+                  const isFocused = beat.focusBuildingId === bId;
+                  return (
+                    <span
+                      key={bId}
+                      className={`px-2 py-0.5 rounded-md border text-[10px] font-extrabold ${
+                        isFocused
+                          ? 'bg-[#B94F32] text-[#FAF0DC] border-[#292C2B]'
+                          : 'bg-[#F1D8A8]/80 text-[#292C2B]/85 border-[#292C2B]/25'
+                      }`}
+                    >
+                      {BUILDING_DEFINITIONS[bId].shortName}
+                    </span>
+                  );
+                })}
+              </div>
 
               {/* Controls Row */}
               <div className="pt-1 flex items-center justify-between gap-2">
@@ -275,7 +314,7 @@ export function MajorEventCutscene({
                       backgroundColor: isLastBeat ? '#396344' : accentColor,
                     }}
                   >
-                    <span>{isLastBeat ? 'Choose Action Plan' : 'Next'}</span>
+                    <span>{isLastBeat ? 'Take Command' : 'Next'}</span>
                     <ChevronRight className="w-4 h-4" aria-hidden="true" />
                   </button>
                 </div>

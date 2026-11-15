@@ -5,7 +5,11 @@ import { getMedaTelemetrySnapshot } from '../../data/nasa';
 import { gameStore, WorldFeedbackEvent } from '../../state/gameStore';
 import { soundFX } from '../../systems/audio';
 import { getBuildingUnlockStatus } from '../../systems/buildings';
-import { isEventOfficiallyActive, isShelterRequiredEvent } from '../../systems/events';
+import {
+  isEventOfficiallyActive,
+  isMajorEventCutsceneActive,
+  isShelterRequiredEvent,
+} from '../../systems/events';
 import { getContextualGilMessage } from '../../systems/gil';
 import { calculateDailyRates } from '../../systems/resources';
 import { getCurrentTutorialStep } from '../../systems/tutorial';
@@ -2341,16 +2345,12 @@ export class OutpostScene extends Phaser.Scene {
   private hasBlockingGameplayOverlay(state: GameState): boolean {
     if (hasBlockingUiDialog()) return true;
     if (state.screen !== 'PLAYING') return true;
-    const activeEventCentered =
-      state.sleepPhase !== 'sleeping' &&
-      Boolean(state.activeEvent) &&
-      !state.activeEvent!.resolved &&
-      state.activeEvent!.animationRemaining <= 0;
+    const majorCutsceneCentered = isMajorEventCutsceneActive(state);
     const summaryCentered = Boolean(state.lastDaySummary);
     const gilHintCentered = Boolean(state.gilDayHint);
     const minigameCentered =
       state.pendingAction?.phase === 'working' && state.pendingAction.kind === 'task';
-    return activeEventCentered || summaryCentered || gilHintCentered || minigameCentered;
+    return majorCutsceneCentered || summaryCentered || gilHintCentered || minigameCentered;
   }
 
   private resetHeldMovementKeys() {
@@ -2774,7 +2774,8 @@ export class OutpostScene extends Phaser.Scene {
     this.renderInfrastructureConduits(state, lighting, rates.hasPowerForLifeSupport, solarOutputFactor);
 
     // Event transition triggers (weather tint rendered smoothly in update())
-    const activeEvent = state.activeEvent;
+    const visibleActiveEvent = state.lastDaySummary ? null : state.activeEvent;
+    const activeEvent = visibleActiveEvent;
     const eventKey = activeEvent
       ? `${activeEvent.dayTriggered}:${activeEvent.definition.id}`
       : null;
@@ -2914,7 +2915,8 @@ export class OutpostScene extends Phaser.Scene {
     return Boolean(
       state.crew.inShelter &&
         isShelterRequiredEvent(state.activeEvent) &&
-        isEventOfficiallyActive(state.activeEvent)
+        isEventOfficiallyActive(state.activeEvent) &&
+        (state.activeEvent?.animationRemaining ?? 0) > 0
     );
   }
 
@@ -4133,13 +4135,7 @@ export class OutpostScene extends Phaser.Scene {
     const animDuration = Math.max(1, activeEvent?.animationDuration ?? 1);
     const animRemaining = activeEvent?.animationRemaining ?? 0;
     const animElapsed = Math.max(0, animDuration - animRemaining);
-    const isCutsceneOngoing = Boolean(
-      activeEvent &&
-        !activeEvent.resolved &&
-        animRemaining <= 0 &&
-        !activeEvent.cutsceneCompleted &&
-        activeEvent.definition.cutscene?.length
-    );
+    const isCutsceneOngoing = isMajorEventCutsceneActive(state);
     const fadeIn = Phaser.Math.Clamp(animElapsed / 1.6, 0, 1);
     const fadeOut =
       animRemaining > 0
@@ -4248,7 +4244,7 @@ export class OutpostScene extends Phaser.Scene {
       state.screen === 'PLAYING' &&
       activeEvent &&
       !activeEvent.resolved &&
-      animRemaining > 0 &&
+      (animRemaining > 0 || isCutsceneOngoing) &&
       activeEventId
     ) {
       soundFX.playEventLoopPulse(activeEventId);

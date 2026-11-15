@@ -7,7 +7,6 @@ import {
   DaySummaryModal,
   DescriptionModal,
   DescriptionModalData,
-  EventModal,
   GilDayHintModal,
   PauseModal,
 } from './components/mission/MissionModals';
@@ -179,10 +178,7 @@ export default function App() {
         Boolean(descriptionModal) ||
         current.screen === 'PAUSED' ||
         (current.screen === 'PLAYING' &&
-          ((Boolean(current.activeEvent) &&
-            !current.activeEvent!.resolved &&
-            current.activeEvent!.animationRemaining <= 0 &&
-            current.sleepPhase !== 'sleeping') ||
+          (isMajorEventCutsceneActive(current) ||
             Boolean(current.lastDaySummary) ||
             Boolean(current.gilDayHint) ||
             (current.pendingAction?.phase === 'working' &&
@@ -251,12 +247,7 @@ export default function App() {
   const isFreeGameplayInputActive =
     state.screen === 'PLAYING' &&
     !descriptionModal &&
-    !(
-      state.activeEvent &&
-      !state.activeEvent.resolved &&
-      state.activeEvent.animationRemaining <= 0 &&
-      state.sleepPhase !== 'sleeping'
-    ) &&
+    !isMajorEventCutsceneActive(state) &&
     !state.lastDaySummary &&
     !state.gilDayHint &&
     !(state.pendingAction?.phase === 'working' && state.pendingAction.kind === 'task');
@@ -272,21 +263,14 @@ export default function App() {
   const availableTaskCount = getAvailableTaskItems(state).length;
   const isTaskProgressActive =
     state.screen === 'PLAYING' && state.pendingAction?.phase === 'working';
-  const isEventCentered =
-    state.screen === 'PLAYING' &&
-    state.sleepPhase !== 'sleeping' &&
-    Boolean(state.activeEvent) &&
-    !state.activeEvent!.resolved &&
-    state.activeEvent!.animationRemaining <= 0;
+  const isEventCentered = isMajorEventCutsceneActive(state);
   const isDaySummaryCentered =
-    state.screen === 'PLAYING' &&
-    Boolean(state.lastDaySummary) &&
-    (!state.activeEvent || state.activeEvent.resolved);
+    state.screen === 'PLAYING' && Boolean(state.lastDaySummary);
   const isGilReportCentered =
     state.screen === 'PLAYING' &&
     !state.lastDaySummary &&
     Boolean(state.gilDayHint) &&
-    (!state.activeEvent || state.activeEvent.resolved);
+    !isMajorEventCutsceneActive(state);
   const isGilCenteredActive = isEventCentered || isDaySummaryCentered || isGilReportCentered;
 
   const activeEventDef =
@@ -403,6 +387,7 @@ export default function App() {
               onSelectBuilding={(id) =>
                 id ? gameStore.focusBuilding(id) : gameStore.selectBuilding(null)
               }
+              onSelectEventDecision={(choiceId) => gameStore.chooseEventDecision(choiceId)}
             />
 
             {/* Row 2: Open Outpost Stage + Auto-Tucking Side Drawers + Mobile Bottom Sheet + Bottom-Left GIL */}
@@ -528,32 +513,14 @@ export default function App() {
         </>
       )}
 
-      {/* Active Environmental Event Alert (opens after live animation & cutscene complete) */}
-      {state.screen === 'PLAYING' &&
-        state.sleepPhase !== 'sleeping' &&
-        state.activeEvent &&
-        !state.activeEvent.resolved &&
-        state.activeEvent.animationRemaining <= 0 &&
-        (Boolean(state.activeEvent.cutsceneCompleted) ||
-          !state.activeEvent.definition.cutscene?.length) && (
-          <EventModal
-            key={`evt_${state.activeEvent.dayTriggered}_${state.activeEvent.definition.id}`}
-            event={state.activeEvent}
-            onAcknowledge={() => gameStore.acknowledgeActiveEvent()}
-            onSelectDecision={(choiceId) => gameStore.chooseEventDecision(choiceId)}
-          />
-        )}
-
       {/* Daily Summary Modal */}
-      {state.screen === 'PLAYING' &&
-        state.lastDaySummary &&
-        (!state.activeEvent || state.activeEvent.resolved) && (
-          <DaySummaryModal
-            key={`summary_${state.lastDaySummary.day}`}
-            summary={state.lastDaySummary}
-            onContinue={() => gameStore.dismissDaySummary()}
-          />
-        )}
+      {state.screen === 'PLAYING' && state.lastDaySummary && (
+        <DaySummaryModal
+          key={`summary_${state.lastDaySummary.day}`}
+          summary={state.lastDaySummary}
+          onContinue={() => gameStore.dismissDaySummary()}
+        />
+      )}
 
       {/* Interactive Infrastructure Repair Minigame Modal */}
       {state.screen === 'PLAYING' &&
@@ -572,7 +539,7 @@ export default function App() {
       {state.screen === 'PLAYING' &&
         !state.lastDaySummary &&
         state.gilDayHint &&
-        (!state.activeEvent || state.activeEvent.resolved) && (
+        !isMajorEventCutsceneActive(state) && (
           <GilDayHintModal
             key={state.gilDayHint.id}
             message={state.gilDayHint}
