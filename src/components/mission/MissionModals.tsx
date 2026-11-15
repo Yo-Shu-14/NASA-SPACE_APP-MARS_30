@@ -386,13 +386,47 @@ export function EventModal({
         </div>
 
         <div className="p-3.5 sm:p-5 space-y-3 text-sm overflow-y-auto overscroll-contain bg-[#FAF0DC] flex-1 min-h-0">
+          <p className="font-bold text-[#292C2B] leading-snug text-center">
+            {event.definition.summary}
+          </p>
+
+          {/* Explicit Risk & Safety Warning Before Player Decision / Action */}
+          <div className="px-3 py-2 rounded-xl bg-[#FDE8E6] border-2 border-[#C94B43]/70 flex items-start gap-2 text-xs text-[#8C2F1C]">
+            <AlertTriangle className="w-4 h-4 text-[#C94B43] shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="min-w-0 space-y-0.5">
+              <div className="font-extrabold">
+                {event.definition.radiationLevel
+                  ? 'Hazard Risk: Working outdoors exposes crew to radiation & HP loss.'
+                  : 'Hazard Risk: Outdoor work during active hazards strains suits & lowers Crew Health.'}
+              </div>
+              <div className="text-[11px] font-semibold text-[#292C2B]/85 leading-snug">
+                {event.definition.recommendedAction}
+              </div>
+            </div>
+          </div>
+
+          {affectedBuildings.length > 0 && (
+            <div className="flex flex-wrap justify-center gap-1.5">
+              {affectedBuildings.map((bId) => (
+                <div
+                  key={bId}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#F1D8A8]/75 border border-[#292C2B]/35 text-[11px] font-extrabold text-[#292C2B]"
+                >
+                  <BuildingIcon id={bId} className="w-4 h-4 shrink-0" />
+                  <span>{BUILDING_DEFINITIONS[bId].shortName}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {event.definition.scienceContext && (
+            <p className="text-[11px] font-semibold text-[#477C9B] leading-snug text-center px-1">
+              {event.definition.scienceContext}
+            </p>
+          )}
+
           {hasChoices ? (
-            <div className="space-y-2.5">
-              {event.definition.scienceContext && (
-                <p className="text-[11px] font-semibold text-[#477C9B] leading-snug text-center px-1">
-                  {event.definition.scienceContext}
-                </p>
-              )}
+            <div className="space-y-2">
               {choices.slice(0, 3).map((choice) => (
                 <button
                   key={choice.id}
@@ -412,11 +446,14 @@ export function EventModal({
                   >
                     <DecisionChoiceIcon icon={choice.icon} />
                   </div>
-                  <div className="flex-1 min-w-0 space-y-1.5">
+                  <div className="flex-1 min-w-0 space-y-1">
                     <div className="text-xs sm:text-sm font-extrabold text-[#292C2B] leading-tight">
                       {choice.title}
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="text-[11px] font-semibold text-[#292C2B]/75 leading-snug">
+                      {choice.shortDesc}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
                       <span className="px-2 py-0.5 rounded-md bg-[#E3F1E6] border border-[#718B78] text-[10px] font-extrabold text-[#2F5B3B]">
                         + {choice.benefitTag}
                       </span>
@@ -429,40 +466,14 @@ export function EventModal({
               ))}
             </div>
           ) : (
-            <>
-              <p className="font-bold text-[#292C2B] leading-snug text-center">
-                {event.definition.summary}
-              </p>
-
-              {event.definition.scienceContext && (
-                <p className="text-[11px] font-semibold text-[#477C9B] leading-snug text-center">
-                  {event.definition.scienceContext}
-                </p>
-              )}
-
-              {affectedBuildings.length > 0 && (
-                <div className="flex flex-wrap justify-center gap-1.5">
-                  {affectedBuildings.map((bId) => (
-                    <div
-                      key={bId}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#F1D8A8]/75 border border-[#292C2B]/35 text-[11px] font-extrabold text-[#292C2B]"
-                    >
-                      <BuildingIcon id={bId} className="w-4 h-4 shrink-0" />
-                      <span>{BUILDING_DEFINITIONS[bId].shortName}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <button
-                type="button"
-                disabled={isClosing}
-                onClick={() => closeWithZoom(onAcknowledge)}
-                className="mars-btn w-full min-h-[44px] py-2.5 px-4 bg-[#718B78] hover:bg-[#5f7866] text-[#FAF0DC] text-sm font-extrabold cursor-pointer"
-              >
-                Got It
-              </button>
-            </>
+            <button
+              type="button"
+              disabled={isClosing}
+              onClick={() => closeWithZoom(onAcknowledge)}
+              className="mars-btn w-full min-h-[44px] py-2.5 px-4 bg-[#718B78] hover:bg-[#5f7866] text-[#FAF0DC] text-sm font-extrabold cursor-pointer"
+            >
+              Got It
+            </button>
           )}
         </div>
       </div>

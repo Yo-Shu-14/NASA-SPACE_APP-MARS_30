@@ -28,7 +28,7 @@ export function canPlantCrop(params: {
   if (!def) return { ok: false, reason: 'Unknown crop' };
 
   if (inShelter) {
-    return { ok: false, reason: 'Crew is sheltering inside Radiation Storm Shelter' };
+    return { ok: false, reason: 'Crew is inside Shelter — tap Go Outside to plant' };
   }
 
   if (greenhouse.status === 'inactive') {

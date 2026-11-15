@@ -278,12 +278,12 @@ export function GilAvatarIcon({
 
 export function MarsLogoLockup() {
   return (
-   <div className="mx-auto w-[320px] max-w-full text-center sm:w-[400px]">
-  <img src={marsLogo} alt="Mars 30" className="h-auto w-full" />
-  <p className="text-[13px] font-bold text-[#B94F32]">
-    Jezero Crater Outpost Restoration
-  </p>
-</div>
+    <div className="mx-auto w-[320px] max-w-full text-center sm:w-[400px]">
+      <img src={marsLogo} alt="Mars 30" width={2172} height={724} className="block h-auto w-full" />
+      <p className="text-[13px] font-bold text-[#B94F32]">
+        Jezero Crater Outpost Restoration
+      </p>
+    </div>
   );
 }
 

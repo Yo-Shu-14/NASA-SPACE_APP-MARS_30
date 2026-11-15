@@ -18,7 +18,7 @@ import { CROP_DEFINITIONS, CROP_MAP } from '../../data/crops';
 import { TOTAL_DAY_HOURS } from '../../data/mission';
 import { RESOURCE_CONFIGS, RESOURCE_ORDER } from '../../data/resources';
 import { getBuildingUnlockStatus } from '../../systems/buildings';
-import { isEventOfficiallyActive, isShelterRequiredEvent } from '../../systems/events';
+import { getActiveOutdoorHazardSummary } from '../../systems/events';
 import { canPlantCrop } from '../../systems/greenhouse';
 import { calculateDailyRates, calculateEnergyGenerationStats } from '../../systems/resources';
 import { getEffectiveTaskCosts, getTasksForBuilding, validateTask } from '../../systems/tasks';
@@ -160,9 +160,7 @@ export function BuildingPanel({
     (!needsRestorationFirst || state.crew.inShelter) &&
     !isSleeping &&
     !isWorkingAnywhere;
-  const shelterRequiredActive =
-    isShelterRequiredEvent(state.activeEvent) && isEventOfficiallyActive(state.activeEvent);
-  const shelterLockedByRadiation = state.crew.inShelter && shelterRequiredActive;
+  const outdoorHazard = getActiveOutdoorHazardSummary(state);
 
   const hasAnyAction =
     visibleTasks.length > 0 ||
@@ -560,13 +558,47 @@ export function BuildingPanel({
             </div>
           )}
 
-          {/* SHELTER PAUSE NOTICE */}
+          {/* SHELTER PAUSE NOTICE (with instant Go Outside toggle) */}
           {state.crew.inShelter && (
-            <div className="p-2.5 rounded-xl bg-[#477C9B]/15 border-2 border-[#477C9B] text-xs flex items-center gap-2 font-extrabold text-[#292C2B]">
-              <Shield className="w-4 h-4 text-[#477C9B] shrink-0" aria-hidden="true" />
-              <span>
-                {shelterRequiredActive ? 'Locked Until Event Ends' : 'Work Paused Inside'}
-              </span>
+            <div className="p-2.5 rounded-xl bg-[#477C9B]/15 border-2 border-[#477C9B] text-xs space-y-2 text-[#292C2B]">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 font-extrabold min-w-0">
+                  <Shield className="w-4 h-4 text-[#477C9B] shrink-0" aria-hidden="true" />
+                  <span className="truncate">Work Paused Inside Shelter</span>
+                </div>
+                {id !== 'radiation_shelter' && !isSleeping && !isWorkingAnywhere && (
+                  <button
+                    type="button"
+                    onClick={onToggleShelter}
+                    className="mars-btn px-2.5 py-1 rounded-lg bg-[#E9B77B] hover:bg-[#DFAB6D] text-[#292C2B] text-[11px] font-extrabold shrink-0 cursor-pointer"
+                  >
+                    Go Outside
+                  </button>
+                )}
+              </div>
+              {outdoorHazard && (
+                <div className="text-[11px] font-bold text-[#B94F32] leading-snug">
+                  Warning: {outdoorHazard.label} active — stepping outside risks Crew Health
+                  {outdoorHazard.isRadiation ? ' & Radiation.' : '.'}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* OUTDOOR HAZARD RISK WARNING WHEN WORKING OUTSIDE DURING EVENTS / HAZARDS */}
+          {!state.crew.inShelter && outdoorHazard && id !== 'radiation_shelter' && (
+            <div className="p-2.5 rounded-xl bg-[#FDE8E6] border-2 border-[#C94B43] text-xs flex items-start gap-2 text-[#8C2F1C]">
+              <AlertTriangle className="w-4 h-4 text-[#C94B43] shrink-0 mt-0.5" aria-hidden="true" />
+              <div className="min-w-0">
+                <div className="font-extrabold leading-tight">
+                  Outdoor Hazard Risk: {outdoorHazard.label}
+                </div>
+                <div className="text-[11px] font-semibold leading-snug mt-0.5">
+                  {outdoorHazard.isRadiation
+                    ? 'Outdoor tasks cost Crew Health & raise Radiation Exposure.'
+                    : 'Outdoor tasks cost extra Crew Health while hazard is active.'}
+                </div>
+              </div>
             </div>
           )}
 
@@ -577,13 +609,10 @@ export function BuildingPanel({
               <button
                 type="button"
                 onClick={onToggleShelter}
-                disabled={shelterLockedByRadiation}
-                className={`mars-btn w-full p-2.5 rounded-xl flex items-center gap-3 text-left ${
-                  shelterLockedByRadiation
-                    ? 'bg-[#718B78] text-[#FAF0DC] cursor-not-allowed opacity-95'
-                    : state.crew.inShelter
-                    ? 'bg-[#E9B77B] text-[#292C2B] cursor-pointer'
-                    : 'bg-[#477C9B] text-[#FAF0DC] cursor-pointer'
+                className={`mars-btn w-full p-2.5 rounded-xl flex items-center gap-3 text-left cursor-pointer ${
+                  state.crew.inShelter
+                    ? 'bg-[#E9B77B] hover:bg-[#DFAB6D] text-[#292C2B]'
+                    : 'bg-[#477C9B] hover:bg-[#3c6b86] text-[#FAF0DC]'
                 }`}
               >
                 <div className="w-9 h-9 rounded-xl bg-[#FAF0DC] border-2 border-[#292C2B] flex items-center justify-center shrink-0">
@@ -591,19 +620,13 @@ export function BuildingPanel({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-extrabold leading-tight">
-                    {shelterLockedByRadiation
-                      ? 'Locked Until Event Ends'
-                      : state.crew.inShelter
-                      ? 'Go Outside'
-                      : 'Enter Shelter'}
+                    {state.crew.inShelter ? 'Go Outside' : 'Enter Shelter'}
                   </div>
                   <div className="text-[11px] font-semibold opacity-95">
-                    {shelterLockedByRadiation
-                      ? state.activeEvent && state.activeEvent.animationRemaining > 0
-                        ? `Wait ${Math.ceil(state.activeEvent.animationRemaining)}s for hazard to clear`
-                        : 'Resolve storm alert to unlock exit'
-                      : state.crew.inShelter
-                      ? 'Resume outpost tasks'
+                    {state.crew.inShelter
+                      ? outdoorHazard
+                        ? 'Hazard active — risks HP outdoors'
+                        : 'Resume outpost tasks'
                       : 'Shields crew & GIL'}
                   </div>
                 </div>

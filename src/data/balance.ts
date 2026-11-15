@@ -219,9 +219,9 @@ export const MINOR_EVENT_COUNTS_BY_DIFFICULTY: Record<
   DifficultyLevel,
   { phase2: number; phase3: number; phase4: number }
 > = {
-  easy: { phase2: 1, phase3: 1, phase4: 1 }, // Low (3 minor events)
-  medium: { phase2: 1, phase3: 2, phase4: 2 }, // Moderate (5 minor events)
-  hard: { phase2: 2, phase3: 3, phase4: 2 }, // High (7 minor events)
+  easy: { phase2: 1, phase3: 2, phase4: 2 }, // Gentle (5 minor events @ 0.75x impact)
+  medium: { phase2: 1, phase3: 2, phase4: 2 }, // Moderate (5 minor events @ 1.0x impact)
+  hard: { phase2: 2, phase3: 3, phase4: 2 }, // High (7 minor events @ 1.35x impact)
 };
 
 export const RADIATION_DAMAGE_OUTSIDE_SHELTER: Record<

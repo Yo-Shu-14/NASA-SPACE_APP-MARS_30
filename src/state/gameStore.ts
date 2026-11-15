@@ -24,6 +24,7 @@ import {
   applyInitialEventImpact,
   applyLateShelterPenalty,
   applyMajorEventDecision,
+  applyOutdoorActivityHazardConsequence,
   BuildingEventImpact,
   clearMitigatedLingeringHazards,
   createActiveEventForDay,
@@ -1022,7 +1023,12 @@ class GameStore {
       }
 
       const prevCondition = cleanState.buildings[task.buildingId].condition;
-      let nextState = applyTaskExecution(task, cleanState, act.timeHoursApplied);
+      const executedState = applyTaskExecution(task, cleanState, act.timeHoursApplied);
+      const hazardExposure = applyOutdoorActivityHazardConsequence(
+        executedState,
+        Math.max(1, act.timeHoursTotal)
+      );
+      let nextState = hazardExposure.nextState;
       const hazardCheck = clearMitigatedLingeringHazards(
         nextState.lingeringHazards,
         nextState.buildings
@@ -1046,7 +1052,38 @@ class GameStore {
           getBuildingUnlockStatus(bId, nextState).unlocked
       );
 
+      if (hazardExposure.healthDelta < 0 && nextState.crew.condition <= 10) {
+        this.stopEventAnimationTicker();
+        this.stopIdleTimeTicker();
+        this.stopSleepTicker();
+        this.stopWorkTicker();
+        const radFail = Boolean(
+          nextState.activeEvent?.definition.radiationLevel ||
+            cleanState.lingeringHazards.some((h) => h.kind === 'ionizing_particles')
+        );
+        soundFX.playOutcomeFanfare(radFail ? 'fail_radiation' : 'fail_condition');
+        this.setState({
+          ...nextState,
+          screen: 'GAME_OVER',
+          sleepPhase: 'idle',
+          sleepingRemaining: 0,
+          ongoingTask: null,
+          pendingAction: null,
+          activeEvent: null,
+          lingeringHazards: [],
+          failureCause: radFail ? 'radiation' : 'condition',
+          endingCutsceneCompleted: false,
+          failureReason: radFail
+            ? 'Crew suffered critical radiation and hazard exposure while working outdoors.'
+            : 'Crew health dropped to a critical level from working outdoors during severe hazards.',
+        });
+        return;
+      }
+
       soundFX.playRepair();
+      if (hazardExposure.healthDelta < 0) {
+        soundFX.playHealthWarning(hazardExposure.healthDelta <= -8);
+      }
       if (hazardCheck.cleared.length > 0) {
         soundFX.playHealthRecovery();
       }
@@ -1068,6 +1105,13 @@ class GameStore {
         taskKind,
         conditionGain,
       });
+      if (hazardExposure.healthDelta < 0) {
+        this.emitFeedback({
+          type: 'crew_hazard_damage',
+          delta: hazardExposure.healthDelta,
+          reason: hazardExposure.reason ?? 'Outdoor hazard exposure',
+        });
+      }
       if (hazardCheck.cleared.length > 0) {
         this.emitFeedback({
           type: 'hazard_cleared',
@@ -1103,8 +1147,7 @@ class GameStore {
         preAppliedTimeHours: act.timeHoursApplied,
       });
 
-      soundFX.playPlantSeeds();
-      this.setState({
+      const plantedState: GameState = {
         ...cleanState,
         greenhouseCrop: result.crop,
         resources: result.resources,
@@ -1115,8 +1158,49 @@ class GameStore {
           ...cleanState.keyDecisions,
           `Sol ${cleanState.day}: Planted Greenhouse crops`,
         ],
-      });
+      };
+      const hazardExposure = applyOutdoorActivityHazardConsequence(
+        plantedState,
+        Math.max(1, act.timeHoursTotal)
+      );
+      const nextState = hazardExposure.nextState;
+
+      if (hazardExposure.healthDelta < 0 && nextState.crew.condition <= 10) {
+        this.stopEventAnimationTicker();
+        this.stopIdleTimeTicker();
+        this.stopSleepTicker();
+        this.stopWorkTicker();
+        soundFX.playOutcomeFanfare('fail_condition');
+        this.setState({
+          ...nextState,
+          screen: 'GAME_OVER',
+          sleepPhase: 'idle',
+          sleepingRemaining: 0,
+          ongoingTask: null,
+          pendingAction: null,
+          activeEvent: null,
+          lingeringHazards: [],
+          failureCause: 'condition',
+          endingCutsceneCompleted: false,
+          failureReason:
+            'Crew health dropped to a critical level from working outdoors during severe hazards.',
+        });
+        return;
+      }
+
+      soundFX.playPlantSeeds();
+      if (hazardExposure.healthDelta < 0) {
+        soundFX.playHealthWarning(hazardExposure.healthDelta <= -8);
+      }
+      this.setState(nextState);
       this.emitFeedback({ type: 'plant', buildingId: 'greenhouse' });
+      if (hazardExposure.healthDelta < 0) {
+        this.emitFeedback({
+          type: 'crew_hazard_damage',
+          delta: hazardExposure.healthDelta,
+          reason: hazardExposure.reason ?? 'Outdoor hazard exposure',
+        });
+      }
     } else if (act.kind === 'harvest') {
       const result = harvestMatureCrop({
         crop: cleanState.greenhouseCrop,
@@ -1131,8 +1215,7 @@ class GameStore {
         return;
       }
 
-      soundFX.playHarvest();
-      this.setState({
+      const harvestedState: GameState = {
         ...cleanState,
         greenhouseCrop: result.crop,
         resources: result.resources,
@@ -1144,12 +1227,53 @@ class GameStore {
           ...cleanState.keyDecisions,
           `Sol ${cleanState.day}: Harvested +${result.harvestedAmount} Food`,
         ],
-      });
+      };
+      const hazardExposure = applyOutdoorActivityHazardConsequence(
+        harvestedState,
+        Math.max(1, act.timeHoursTotal)
+      );
+      const nextState = hazardExposure.nextState;
+
+      if (hazardExposure.healthDelta < 0 && nextState.crew.condition <= 10) {
+        this.stopEventAnimationTicker();
+        this.stopIdleTimeTicker();
+        this.stopSleepTicker();
+        this.stopWorkTicker();
+        soundFX.playOutcomeFanfare('fail_condition');
+        this.setState({
+          ...nextState,
+          screen: 'GAME_OVER',
+          sleepPhase: 'idle',
+          sleepingRemaining: 0,
+          ongoingTask: null,
+          pendingAction: null,
+          activeEvent: null,
+          lingeringHazards: [],
+          failureCause: 'condition',
+          endingCutsceneCompleted: false,
+          failureReason:
+            'Crew health dropped to a critical level from working outdoors during severe hazards.',
+        });
+        return;
+      }
+
+      soundFX.playHarvest();
+      if (hazardExposure.healthDelta < 0) {
+        soundFX.playHealthWarning(hazardExposure.healthDelta <= -8);
+      }
+      this.setState(nextState);
       this.emitFeedback({
         type: 'harvest',
         buildingId: 'greenhouse',
         amount: result.harvestedAmount,
       });
+      if (hazardExposure.healthDelta < 0) {
+        this.emitFeedback({
+          type: 'crew_hazard_damage',
+          delta: hazardExposure.healthDelta,
+          reason: hazardExposure.reason ?? 'Outdoor hazard exposure',
+        });
+      }
     }
   }
 
@@ -1194,18 +1318,8 @@ class GameStore {
     }
     const shelter = this.state.buildings.radiation_shelter;
     const nextInShelter = !this.state.crew.inShelter;
-    // Entering shelter requires a restored, non-inactive shelter; leaving shelter is always allowed once danger passes
+    // Entering shelter requires a restored, non-inactive shelter; leaving shelter is always permitted
     if (nextInShelter && (!shelter.restoredOnce || shelter.status === 'inactive')) return;
-
-    // Strict shelter lock: during active shelter-required events, crew must remain inside until the event officially ends
-    if (
-      !nextInShelter &&
-      isShelterRequiredEvent(this.state.activeEvent) &&
-      isEventOfficiallyActive(this.state.activeEvent)
-    ) {
-      soundFX.playError();
-      return;
-    }
 
     let baseState = this.state;
     let latePenalty = 0;
@@ -1215,9 +1329,16 @@ class GameStore {
       latePenalty = lateResult.penalty;
     }
 
+    const hazardActiveOnExit =
+      !nextInShelter &&
+      (isEventOfficiallyActive(this.state.activeEvent) ||
+        (this.state.lingeringHazards?.length ?? 0) > 0);
+
     soundFX.playShelterToggle(nextInShelter);
     if (latePenalty > 0) {
       soundFX.playHealthWarning(latePenalty >= 12);
+    } else if (hazardActiveOnExit && isShelterRequiredEvent(this.state.activeEvent)) {
+      soundFX.playHealthWarning(false);
     }
 
     const extraNotes: string[] = [];
@@ -1227,6 +1348,11 @@ class GameStore {
           ? `Sol ${baseState.day}: Entered shelter late (-${latePenalty}% crew health)`
           : `Sol ${baseState.day}: Moved crew to Radiation Storm Shelter`
       );
+    } else if (hazardActiveOnExit) {
+      const exitNote = `Sol ${baseState.day}: Stepped outside during active hazard`;
+      if (!baseState.keyDecisions.includes(exitNote)) {
+        extraNotes.push(exitNote);
+      }
     }
 
     this.setState({
@@ -1667,7 +1793,7 @@ class GameStore {
       if (solarDue) {
         nextBuildings.solar_panels = applyBuildingConditionChange(
           nextBuildings.solar_panels,
-          -4,
+          -5,
           false,
           'wear'
         );
@@ -1680,15 +1806,28 @@ class GameStore {
       if (b.status !== 'inactive') {
         const daysSince = upcomingDay - (b.lastMaintainedDay ?? 1);
         if (daysSince > 0 && daysSince % interval === 0) {
-          nextBuildings[tankId] = applyBuildingConditionChange(b, -10, false, 'wear');
+          nextBuildings[tankId] = applyBuildingConditionChange(b, -8, false, 'wear');
         }
       }
     }
 
-    if (current.day % 3 === 0) {
-      for (const bId of ['oxygen_generator', 'water_recycling', 'greenhouse'] as BuildingId[]) {
-        if (nextBuildings[bId].status === 'operational') {
-          nextBuildings[bId] = applyBuildingConditionChange(nextBuildings[bId], -3, false, 'wear');
+    // Staggered Martian environmental wear across active core & support systems so maintenance stays meaningful
+    const staggeredWearSchedule: Array<{ id: BuildingId; interval: number; offset: number; wear: number }> = [
+      { id: 'oxygen_generator', interval: 3, offset: 0, wear: -5 },
+      { id: 'water_recycling', interval: 3, offset: 1, wear: -5 },
+      { id: 'greenhouse', interval: 3, offset: 2, wear: -5 },
+      { id: 'main_habitat', interval: 4, offset: 1, wear: -5 },
+      { id: 'radiation_shelter', interval: 5, offset: 2, wear: -5 },
+      { id: 'energy_storage', interval: 5, offset: 3, wear: -5 },
+      { id: 'oxygen_storage', interval: 5, offset: 4, wear: -5 },
+      { id: 'maintenance_facility', interval: 4, offset: 2, wear: -5 },
+    ];
+    for (const entry of staggeredWearSchedule) {
+      const b = nextBuildings[entry.id];
+      if (b.status === 'operational') {
+        const daysSince = upcomingDay - (b.lastMaintainedDay ?? 1);
+        if (daysSince >= 2 && (current.day + entry.offset) % entry.interval === 0) {
+          nextBuildings[entry.id] = applyBuildingConditionChange(b, entry.wear, false, 'wear');
         }
       }
     }

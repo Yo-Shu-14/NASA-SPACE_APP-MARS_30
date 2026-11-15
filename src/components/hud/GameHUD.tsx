@@ -780,16 +780,16 @@ export function GameHUD({
                     {Math.ceil(state.activeEvent.animationRemaining)}s
                   </span>
                 </div>
-                <div className="hidden sm:flex mobile-landscape:hidden lg:flex items-center justify-between gap-2 mt-1">
-                  <span className="text-[10px] font-bold text-[#292C2B]/85 truncate">
+                <div className="flex items-center justify-between gap-2 mt-1">
+                  <span className="text-[10px] font-bold text-[#292C2B]/90 truncate">
                     {isShelterRequiredEvent(state.activeEvent) && !state.crew.inShelter
-                      ? 'Radiation hazard — Enter Shelter!'
+                      ? 'Hazard risk: Outdoor work hurts HP & +Rad — Enter Shelter!'
                       : (state.activeEvent.definition.targetBuildings ?? []).length > 0
-                      ? `At risk: ${(state.activeEvent.definition.targetBuildings ?? [])
-                          .slice(0, 3)
+                      ? `Outdoor work risks Crew HP · At risk: ${(state.activeEvent.definition.targetBuildings ?? [])
+                          .slice(0, 2)
                           .map((bId) => BUILDING_DEFINITIONS[bId].shortName)
                           .join(', ')}`
-                      : 'Outpost-wide event'}
+                      : 'Storm active — outdoor work risks Crew HP'}
                   </span>
                 </div>
                 <div className="h-1.5 w-full bg-[#F1D8A8] border border-[#292C2B] rounded-full overflow-hidden mt-1">
@@ -824,8 +824,8 @@ export function GameHUD({
               <Shield className="w-3.5 h-3.5 lg:w-4 lg:h-4 shrink-0" aria-hidden="true" />
               <span>
                 {isShelterRequiredEvent(state.activeEvent) && isEventOfficiallyActive(state.activeEvent)
-                  ? 'In Shelter — Locked Until Event Ends'
-                  : 'In Shelter — Work Paused'}
+                  ? 'In Shelter (Safe) — Tap to Exit'
+                  : 'In Shelter — Tap to Go Outside'}
               </span>
             </button>
           ) : state.activeEvent && !state.activeEvent.resolved ? (

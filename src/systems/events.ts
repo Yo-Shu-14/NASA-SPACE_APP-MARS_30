@@ -1341,3 +1341,156 @@ export function resolveEventAtEndOfDay(params: {
     outcomeSummary: summaryParts.join(' · ') || 'Weather event passed',
   };
 }
+
+export interface OutdoorHazardSummary {
+  hasHazard: boolean;
+  isRadiation: boolean;
+  label: string;
+  riskWarning: string;
+}
+
+export function getActiveOutdoorHazardSummary(
+  state: Pick<GameState, 'screen' | 'sleepPhase' | 'activeEvent' | 'lingeringHazards'>
+): OutdoorHazardSummary | null {
+  if (isMajorEventCutsceneActive(state)) {
+    return null;
+  }
+
+  const activeEvt = state.activeEvent;
+  if (activeEvt && !activeEvt.resolved) {
+    const def = activeEvt.definition;
+    const isRadiation = Boolean(def.radiationLevel && def.radiationLevel > 0);
+    return {
+      hasHazard: true,
+      isRadiation,
+      label: def.title,
+      riskWarning: isRadiation
+        ? `${def.title} active — outdoor tasks cost Crew Health and increase Radiation Exposure. Enter Shelter for full protection.`
+        : `${def.title} active — working outdoors during hazardous weather strains suits and costs Crew Health.`,
+    };
+  }
+
+  const primaryLingering = state.lingeringHazards?.[0];
+  if (primaryLingering) {
+    const isRadiation = primaryLingering.kind === 'ionizing_particles';
+    return {
+      hasHazard: true,
+      isRadiation,
+      label: primaryLingering.label,
+      riskWarning: isRadiation
+        ? `${primaryLingering.label} active — outdoor work reduces Crew Health and raises Radiation Exposure.`
+        : `${primaryLingering.label} active — working outdoors reduces Crew Health until cleared.`,
+    };
+  }
+
+  return null;
+}
+
+export function applyOutdoorActivityHazardConsequence(
+  state: GameState,
+  workHours = 2
+): {
+  nextState: GameState;
+  healthDelta: number;
+  radiationDelta: number;
+  reason: string | null;
+} {
+  if (isMajorEventCutsceneActive(state) || state.crew.inShelter) {
+    return { nextState: state, healthDelta: 0, radiationDelta: 0, reason: null };
+  }
+
+  const diffMult = DISASTER_DAMAGE_MULTIPLIER[state.difficulty];
+  const hoursFactor = Math.min(1.5, Math.max(0.75, workHours / 2));
+
+  const activeEvt = state.activeEvent;
+  if (activeEvt && !activeEvt.resolved) {
+    const def = activeEvt.definition;
+    const isRadiation = Boolean(def.radiationLevel && def.radiationLevel > 0);
+
+    let baseHpLoss = 3;
+    let baseRadGain = 0;
+
+    if (isRadiation) {
+      if (def.severity === 'super_major') {
+        baseHpLoss = 8;
+        baseRadGain = 7;
+      } else if (def.severity === 'major') {
+        baseHpLoss = 7;
+        baseRadGain = 6;
+      } else {
+        baseHpLoss = 4;
+        baseRadGain = 4;
+      }
+    } else if (def.severity === 'super_major') {
+      baseHpLoss = 6;
+    } else if (def.severity === 'major') {
+      baseHpLoss = 5;
+    } else {
+      baseHpLoss = 3;
+    }
+
+    const hpLoss = Math.max(2, Math.min(12, Math.round(baseHpLoss * diffMult * hoursFactor)));
+    const radGain =
+      baseRadGain > 0
+        ? Math.max(2, Math.min(10, Math.round(baseRadGain * diffMult * hoursFactor)))
+        : 0;
+
+    const nextCondition = Math.max(0, state.crew.condition - hpLoss);
+    const appliedLoss = state.crew.condition - nextCondition;
+    const nextRad = Math.min(100, state.crew.radiationExposure + radGain);
+    const appliedRad = nextRad - state.crew.radiationExposure;
+
+    return {
+      healthDelta: -appliedLoss,
+      radiationDelta: appliedRad,
+      reason: isRadiation ? `${def.title} exposure` : `${def.title} hazard`,
+      nextState: {
+        ...state,
+        crew: {
+          ...state.crew,
+          condition: nextCondition,
+          radiationExposure: nextRad,
+        },
+        activeEvent: {
+          ...activeEvt,
+          totalHazardHealthLost: (activeEvt.totalHazardHealthLost ?? 0) + appliedLoss,
+        },
+      },
+    };
+  }
+
+  const hazards = state.lingeringHazards ?? [];
+  if (hazards.length > 0) {
+    const worst = hazards.reduce((a, b) =>
+      b.dailyHealthDamage > a.dailyHealthDamage ? b : a
+    );
+    const isRadiation = worst.kind === 'ionizing_particles';
+    const hpLoss = Math.max(
+      2,
+      Math.min(7, Math.round(worst.dailyHealthDamage * 0.55 * diffMult * hoursFactor))
+    );
+    const radGain = isRadiation ? Math.max(2, Math.round(3 * diffMult)) : 0;
+
+    const nextCondition = Math.max(0, state.crew.condition - hpLoss);
+    const appliedLoss = state.crew.condition - nextCondition;
+    const nextRad = Math.min(100, state.crew.radiationExposure + radGain);
+    const appliedRad = nextRad - state.crew.radiationExposure;
+
+    return {
+      healthDelta: -appliedLoss,
+      radiationDelta: appliedRad,
+      reason: worst.label,
+      nextState: {
+        ...state,
+        crew: {
+          ...state.crew,
+          condition: nextCondition,
+          radiationExposure: nextRad,
+        },
+      },
+    };
+  }
+
+  return { nextState: state, healthDelta: 0, radiationDelta: 0, reason: null };
+}
+
