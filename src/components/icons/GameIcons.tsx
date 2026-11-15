@@ -1,4 +1,5 @@
 import React from 'react';
+import marsLogo from '../../assets/logo.png';
 import { GilEmotion } from '../../types/game';
 import { ResourceType } from '../../types/resource';
 
@@ -277,45 +278,12 @@ export function GilAvatarIcon({
 
 export function MarsLogoLockup() {
   return (
-    <svg
-      viewBox="0 0 340 86"
-      className="w-72 sm:w-80 h-auto mx-auto"
-      role="img"
-      aria-label="Mars 30"
-    >
-      {/* Mars planet emblem */}
-      <circle cx="42" cy="43" r="32" fill="#B94F32" stroke="#292C2B" strokeWidth="3.5" />
-      <path d="M18 35 Q42 26 66 37" fill="none" stroke="#D77B4A" strokeWidth="5" strokeLinecap="round" />
-      <circle cx="30" cy="52" r="6" fill="#993E25" />
-      <circle cx="52" cy="48" r="4" fill="#993E25" />
-      {/* Mini outpost dome on planet */}
-      <rect x="33" y="18" width="18" height="10" rx="4" fill="#F1D8A8" stroke="#292C2B" strokeWidth="2.5" />
-
-      {/* Title Wordmark */}
-      <text
-        x="92"
-        y="50"
-        fontFamily="'Plus Jakarta Sans', sans-serif"
-        fontWeight="800"
-        fontSize="42"
-        letterSpacing="-1"
-        textRendering="geometricPrecision"
-        fill="#292C2B"
-      >
-        MARS 30
-      </text>
-      <text
-        x="94"
-        y="70"
-        fontFamily="'Plus Jakarta Sans', sans-serif"
-        fontWeight="700"
-        fontSize="13"
-        textRendering="geometricPrecision"
-        fill="#B94F32"
-      >
-        Jezero Crater Outpost Restoration
-      </text>
-    </svg>
+   <div className="mx-auto w-[320px] max-w-full text-center sm:w-[400px]">
+  <img src={marsLogo} alt="Mars 30" className="h-auto w-full" />
+  <p className="text-[13px] font-bold text-[#B94F32]">
+    Jezero Crater Outpost Restoration
+  </p>
+</div>
   );
 }
 

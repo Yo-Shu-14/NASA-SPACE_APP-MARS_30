@@ -183,43 +183,14 @@ export function TitleScreen({
           </p>
         </div>
 
-        {/* Visual Mission Loop Pillars */}
-        <div className="mt-4 sm:mt-5 grid grid-cols-3 gap-1.5 sm:gap-2.5 text-center sm:text-left">
-          <div className="mars-panel-light p-2 sm:p-3 flex flex-col sm:flex-row items-center gap-1 sm:gap-2.5">
-            <BuildingIcon id="solar_panels" className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <div className="min-w-0">
-              <div className="text-xs font-extrabold text-[#B94F32]">Restore</div>
-              <div className="text-[10px] sm:text-[11px] font-medium text-[#292C2B]/75 leading-tight">
-                Power, air &amp; water
-              </div>
-            </div>
-          </div>
-          <div className="mars-panel-light p-2 sm:p-3 flex flex-col sm:flex-row items-center gap-1 sm:gap-2.5">
-            <BuildingIcon id="greenhouse" className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <div className="min-w-0">
-              <div className="text-xs font-extrabold text-[#477C9B]">Sustain</div>
-              <div className="text-[10px] sm:text-[11px] font-medium text-[#292C2B]/75 leading-tight">
-                Crops &amp; stamina
-              </div>
-            </div>
-          </div>
-          <div className="mars-panel-light p-2 sm:p-3 flex flex-col sm:flex-row items-center gap-1 sm:gap-2.5">
-            <BuildingIcon id="radiation_shelter" className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <div className="min-w-0">
-              <div className="text-xs font-extrabold text-[#396344]">Protect</div>
-              <div className="text-[10px] sm:text-[11px] font-medium text-[#292C2B]/75 leading-tight">
-                Dust &amp; solar storms
-              </div>
-            </div>
-          </div>
-        </div>
+        
 
         {/* Visual Crew Roster Strip */}
-        <div className="mt-3 mars-panel-light px-2.5 sm:px-3 py-2 sm:py-2.5">
+        <div className="mt-3 px-2.5 py-2 sm:px-3 sm:py-2.5">
           <div className="grid grid-cols-6 gap-1 sm:gap-1.5 text-center">
             {CREW_PREVIEW.map((member) => (
               <div key={member.speaker} className="flex flex-col items-center">
-                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-[#F1D8A8]/70 border border-[#292C2B]/30 flex items-center justify-center overflow-hidden">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-[#FAF0DC] border border-[#292C2B]/30 flex items-center justify-center overflow-hidden">
                   <CrewPortrait
                     speaker={member.speaker}
                     mood={member.speaker === 'GIL' ? 'determined' : 'calm'}
@@ -339,9 +310,7 @@ export function TitleScreen({
           </button>
         </div>
 
-        <p className="mt-3 text-center text-[11px] font-semibold text-[#292C2B]/70 leading-snug">
-          Tap buildings to inspect · Drag or WASD to pan · Pinch or scroll to zoom · Esc to pause
-        </p>
+     
       </div>
     </div>
   );

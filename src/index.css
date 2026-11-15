@@ -68,6 +68,25 @@
   border-radius: 8px;
 }
 
+.mars-logo-splash {
+  color: #FFD54A;
+  line-height: 1.12;
+  text-shadow: -1px -1px 0 #292C2B, 1px -1px 0 #292C2B,
+    -1px 1px 0 #292C2B, 1px 2px 0 #292C2B;
+  rotate: 14deg;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mars-logo-splash {
+    animation: mars-logo-splash-pulse 850ms ease-in-out infinite alternate;
+  }
+}
+
+@keyframes mars-logo-splash-pulse {
+  from { scale: 1; }
+  to { scale: 1.12; }
+}
+
 .mars-btn {
   border: 2px solid #292C2B;
   box-shadow: 0 3px 0 #292C2B;
