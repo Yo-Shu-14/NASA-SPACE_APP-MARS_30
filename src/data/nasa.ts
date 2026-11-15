@@ -1,3 +1,4 @@
+import { isEventOfficiallyActive } from '../systems/events';
 import { ActiveEvent } from '../types/event';
 
 export interface NasaReferenceEntry {
@@ -107,7 +108,7 @@ export function getMedaTelemetrySnapshot(
   let skyConditionLabel =
     clampedH >= 17.5 || clampedH < 6.5 ? 'Twilight Blue-Haze' : 'Clear Butterscotch';
 
-  if (activeEvent) {
+  if (isEventOfficiallyActive(activeEvent) && activeEvent) {
     switch (activeEvent.definition.id) {
       case 'global_dust_storm':
         // High optical depth cools daytime highs and traps thermal IR slightly at night

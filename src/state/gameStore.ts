@@ -11,6 +11,12 @@ import {
 } from '../data/mission';
 import { TASK_DEFINITIONS } from '../data/tasks';
 import { evaluateSustainability } from '../systems/assessment';
+import {
+  applyDailyActivityExecution,
+  generateDailyActivitiesForSol,
+  getActivityTaskAnimKind,
+  validateDailyActivity,
+} from '../systems/activities';
 import { soundFX } from '../systems/audio';
 import {
   applyBuildingConditionChange,
@@ -30,6 +36,7 @@ import {
   createActiveEventForDay,
   createLingeringHazardForEvent,
   createScarsForEvent,
+  finalizeExpiredActiveEvent,
   generateMissionEventSchedule,
   isEventOfficiallyActive,
   isMajorEventCutsceneActive,
@@ -105,10 +112,18 @@ export type WorldFeedbackEvent =
     }
   | { type: 'plant'; buildingId: 'greenhouse' }
   | { type: 'harvest'; buildingId: 'greenhouse'; amount: number }
+  | { type: 'activity'; buildingId: BuildingId; label: string; rewardSummary: string }
   | { type: 'shelter'; inShelter: boolean }
   | { type: 'focus_building'; buildingId: BuildingId }
   | { type: 'decision'; choiceTitle: string; buildingImpacts?: BuildingEventImpact[] }
   | { type: 'event_impact'; eventId: string; buildingImpacts: BuildingEventImpact[] }
+  | {
+      type: 'event_ended';
+      eventId: string;
+      title: string;
+      hasDamage: boolean;
+      spawnedHazardLabel?: string | null;
+    }
   | { type: 'sleep_start' }
   | { type: 'end_day'; day: number; buildingImpacts?: BuildingEventImpact[] }
   | { type: 'crew_hazard_damage'; delta: number; reason?: string }
@@ -181,6 +196,9 @@ export function createInitialGameState(
     totalTasksCompleted: 0,
     majorTasksCompleted: 0,
     minorTasksCompleted: 0,
+    dailyActivities: [],
+    activityCooldowns: {},
+    dailyActivitiesCompleted: 0,
     keyDecisions: [],
     seed,
     audioMuted: false,
@@ -204,17 +222,24 @@ class GameStore {
   constructor() {
     const restored = loadSavedMissionState();
     if (restored) {
-      this.state = restored;
-      soundFX.setMuted(restored.audioMuted);
-      if (restored.screen === 'PLAYING') {
+      let initialRestored = restored;
+      if (
+        initialRestored.screen === 'PLAYING' &&
+        initialRestored.activeEvent &&
+        !initialRestored.activeEvent.resolved &&
+        initialRestored.activeEvent.animationRemaining <= 0
+      ) {
+        initialRestored = finalizeExpiredActiveEvent(initialRestored).nextState;
+      }
+      this.state = initialRestored;
+      soundFX.setMuted(initialRestored.audioMuted);
+      if (initialRestored.screen === 'PLAYING') {
         this.startIdleTimeTicker();
         if (
-          !restored.lastDaySummary &&
-          !restored.gilDayHint &&
-          !isMajorEventCutsceneActive(restored) &&
-          restored.activeEvent &&
-          !restored.activeEvent.resolved &&
-          restored.activeEvent.animationRemaining > 0
+          !initialRestored.lastDaySummary &&
+          !initialRestored.gilDayHint &&
+          !isMajorEventCutsceneActive(initialRestored) &&
+          isEventOfficiallyActive(initialRestored.activeEvent)
         ) {
           this.startEventAnimationTicker();
         }
@@ -391,24 +416,15 @@ class GameStore {
         return;
       }
 
-      const isFastForwardInShelter =
-        cur.sleepPhase === 'returning' &&
-        cur.crew.inShelter &&
-        isShelterRequiredEvent(evt);
-      const stepSec = isFastForwardInShelter ? 0.65 : 0.25;
-
+      // Event duration is strictly fixed (15s minor / 20s major) regardless of player actions
+      const stepSec = 0.25;
       const nextRemaining = Math.max(0, Number((evt.animationRemaining - stepSec).toFixed(2)));
-      const autoResolveNoChoiceStorm =
-        nextRemaining <= 0 &&
-        isFastForwardInShelter &&
-        (!evt.definition.choices || evt.definition.choices.length === 0);
 
       let updatedState: GameState = {
         ...cur,
         activeEvent: {
           ...evt,
           animationRemaining: nextRemaining,
-          resolved: evt.resolved || autoResolveNoChoiceStorm,
         },
       };
 
@@ -418,11 +434,17 @@ class GameStore {
       );
       updatedState = healthTickedState;
 
+      let emittedImpactNow = false;
+      let impactBuildingList: BuildingEventImpact[] = [];
+      let impactDamageTaken = 0;
+
       const impactTriggerAt = evt.animationDuration >= 20 ? 2.5 : 1.8;
-      if (!evt.initialDamageApplied && nextRemaining <= impactTriggerAt) {
+      if (!evt.initialDamageApplied && (nextRemaining <= impactTriggerAt || nextRemaining <= 0)) {
         const prevCond = updatedState.crew.condition;
         const { nextState: impactedState, buildingImpacts } = applyInitialEventImpact(updatedState);
-        const impactDamageTaken = prevCond - impactedState.crew.condition;
+        impactDamageTaken = prevCond - impactedState.crew.condition;
+        impactBuildingList = buildingImpacts;
+        emittedImpactNow = true;
         const nextCapacities = calculateResourceCapacities(
           impactedState.buildings,
           impactedState.difficulty
@@ -467,7 +489,80 @@ class GameStore {
           });
           return;
         }
-        this.setState(updatedState);
+      }
+
+      if (nextRemaining <= 0) {
+        this.stopEventAnimationTicker();
+        const {
+          nextState: finalizedState,
+          buildingImpacts: finalImpacts,
+          healthDelta: finalHealthDelta,
+          spawnedHazardLabel,
+        } = finalizeExpiredActiveEvent(updatedState);
+
+        if (finalizedState.crew.condition <= 10) {
+          this.stopIdleTimeTicker();
+          this.stopSleepTicker();
+          this.stopWorkTicker();
+          const radFail = Boolean(evt.definition.radiationLevel);
+          soundFX.playOutcomeFanfare(radFail ? 'fail_radiation' : 'fail_condition');
+          this.setState({
+            ...finalizedState,
+            screen: 'GAME_OVER',
+            sleepPhase: 'idle',
+            sleepingRemaining: 0,
+            ongoingTask: null,
+            pendingAction: null,
+            activeEvent: null,
+            lingeringHazards: [],
+            failureCause: radFail ? 'radiation' : 'condition',
+            endingCutsceneCompleted: false,
+            failureReason: radFail
+              ? 'Crew suffered lethal solar radiation exposure outside the Radiation Storm Shelter.'
+              : 'Crew health dropped to a critical level from severe Martian hazard exposure.',
+          });
+          return;
+        }
+
+        soundFX.playEventMomentCue('outcome_resolved');
+        this.setState(finalizedState);
+
+        if (impactDamageTaken > 0 || finalHealthDelta < 0) {
+          const totalDrop = impactDamageTaken + Math.max(0, -finalHealthDelta);
+          if (totalDrop > 0) {
+            this.emitFeedback({
+              type: 'crew_hazard_damage',
+              delta: -totalDrop,
+              reason: evt.definition.title,
+            });
+          }
+        }
+        if (emittedImpactNow && impactBuildingList.length > 0) {
+          this.emitFeedback({
+            type: 'event_impact',
+            eventId: evt.definition.id,
+            buildingImpacts: impactBuildingList,
+          });
+        }
+        const hasDamage = finalImpacts.some(
+          (imp) =>
+            imp.conditionDelta < 0 ||
+            Boolean(imp.dustAdded && imp.dustAdded > 0) ||
+            Boolean(imp.frostAdded && imp.frostAdded > 0) ||
+            Boolean(imp.malfunctionKind)
+        );
+        this.emitFeedback({
+          type: 'event_ended',
+          eventId: evt.definition.id,
+          title: evt.definition.title,
+          hasDamage,
+          spawnedHazardLabel,
+        });
+        return;
+      }
+
+      this.setState(updatedState);
+      if (emittedImpactNow) {
         if (impactDamageTaken > 0) {
           this.emitFeedback({
             type: 'crew_hazard_damage',
@@ -475,15 +570,13 @@ class GameStore {
             reason: evt.definition.title,
           });
         }
-        if (buildingImpacts.length > 0) {
+        if (impactBuildingList.length > 0) {
           this.emitFeedback({
             type: 'event_impact',
             eventId: evt.definition.id,
-            buildingImpacts,
+            buildingImpacts: impactBuildingList,
           });
         }
-      } else {
-        this.setState(updatedState);
       }
 
       if (healthDelta < 0) {
@@ -493,10 +586,6 @@ class GameStore {
           delta: healthDelta,
           reason: evt.definition.title,
         });
-      }
-
-      if (nextRemaining <= 0) {
-        this.stopEventAnimationTicker();
       }
     }, 250);
   }
@@ -589,6 +678,7 @@ class GameStore {
         prevState.lastDaySummary === computed.lastDaySummary &&
         prevState.gilDayHint === computed.gilDayHint &&
         prevState.audioMuted === computed.audioMuted &&
+        prevState.dailyActivities === computed.dailyActivities &&
         prevState.tutorialStep === computed.tutorialStep &&
         prevState.tutorialSkipped === computed.tutorialSkipped;
 
@@ -634,16 +724,23 @@ class GameStore {
     this.stopIdleTimeTicker();
     soundFX.playSelect();
     soundFX.setMuted(restored.audioMuted);
-    this.setState(restored);
-    if (restored.screen === 'PLAYING') {
+    let nextRestored = restored;
+    if (
+      nextRestored.screen === 'PLAYING' &&
+      nextRestored.activeEvent &&
+      !nextRestored.activeEvent.resolved &&
+      nextRestored.activeEvent.animationRemaining <= 0
+    ) {
+      nextRestored = finalizeExpiredActiveEvent(nextRestored).nextState;
+    }
+    this.setState(nextRestored);
+    if (nextRestored.screen === 'PLAYING') {
       this.startIdleTimeTicker();
       if (
-        !restored.lastDaySummary &&
-        !restored.gilDayHint &&
-        !isMajorEventCutsceneActive(restored) &&
-        restored.activeEvent &&
-        !restored.activeEvent.resolved &&
-        restored.activeEvent.animationRemaining > 0
+        !nextRestored.lastDaySummary &&
+        !nextRestored.gilDayHint &&
+        !isMajorEventCutsceneActive(nextRestored) &&
+        isEventOfficiallyActive(nextRestored.activeEvent)
       ) {
         this.startEventAnimationTicker();
       }
@@ -733,12 +830,23 @@ class GameStore {
   }
 
   public setScreen(screen: ScreenMode) {
+    if (screen === 'PAUSED') {
+      this.stopEventAnimationTicker();
+    }
     this.setState({
       ...this.state,
       screen,
     });
     if (screen === 'PLAYING') {
       this.startIdleTimeTicker();
+      if (
+        !this.state.lastDaySummary &&
+        !this.state.gilDayHint &&
+        !isMajorEventCutsceneActive(this.state) &&
+        isEventOfficiallyActive(this.state.activeEvent)
+      ) {
+        this.startEventAnimationTicker();
+      }
     }
   }
 
@@ -948,6 +1056,12 @@ class GameStore {
         !cur.greenhouseCrop?.isMature ||
         cur.hoursElapsed + remainingHour > TOTAL_DAY_HOURS
       ) {
+        this.setState({ ...cur, pendingAction: null, ongoingTask: null });
+        return;
+      }
+    } else if (act.kind === 'activity') {
+      const activity = cur.dailyActivities.find((a) => a.id === act.activityId);
+      if (!activity || !validateDailyActivity(activity, cur, act.timeHoursApplied).canExecute) {
         this.setState({ ...cur, pendingAction: null, ongoingTask: null });
         return;
       }
@@ -1280,6 +1394,108 @@ class GameStore {
           reason: hazardExposure.reason ?? 'Outdoor hazard exposure',
         });
       }
+    } else if (act.kind === 'activity' && act.activityId) {
+      const activity = cleanState.dailyActivities.find((a) => a.id === act.activityId);
+      if (
+        !activity ||
+        !validateDailyActivity(activity, cleanState, act.timeHoursApplied).canExecute
+      ) {
+        this.setState(cleanState);
+        return;
+      }
+
+      const executedState = applyDailyActivityExecution(
+        activity,
+        cleanState,
+        act.timeHoursApplied
+      );
+      const hazardExposure = activity.isOutdoor
+        ? applyOutdoorActivityHazardConsequence(
+            executedState,
+            Math.max(1, act.timeHoursTotal)
+          )
+        : { nextState: executedState, healthDelta: 0, radiationDelta: 0, reason: null };
+
+      let nextState = hazardExposure.nextState;
+      const hazardCheck = clearMitigatedLingeringHazards(
+        nextState.lingeringHazards,
+        nextState.buildings
+      );
+      const nextCapacities = calculateResourceCapacities(
+        nextState.buildings,
+        nextState.difficulty
+      );
+      nextState = {
+        ...nextState,
+        ongoingTask: null,
+        pendingAction: null,
+        lingeringHazards: hazardCheck.remaining,
+        capacities: nextCapacities,
+        resources: clampResourcesToCapacity(nextState.resources, nextCapacities),
+      };
+
+      if (hazardExposure.healthDelta < 0 && nextState.crew.condition <= 10) {
+        this.stopEventAnimationTicker();
+        this.stopIdleTimeTicker();
+        this.stopSleepTicker();
+        this.stopWorkTicker();
+        const radFail = Boolean(
+          nextState.activeEvent?.definition.radiationLevel ||
+            cleanState.lingeringHazards.some((h) => h.kind === 'ionizing_particles')
+        );
+        soundFX.playOutcomeFanfare(radFail ? 'fail_radiation' : 'fail_condition');
+        this.setState({
+          ...nextState,
+          screen: 'GAME_OVER',
+          sleepPhase: 'idle',
+          sleepingRemaining: 0,
+          ongoingTask: null,
+          pendingAction: null,
+          activeEvent: null,
+          lingeringHazards: [],
+          failureCause: radFail ? 'radiation' : 'condition',
+          endingCutsceneCompleted: false,
+          failureReason: radFail
+            ? 'Crew suffered critical radiation and hazard exposure during outdoor operations.'
+            : 'Crew health dropped to a critical level from outdoor hazards.',
+        });
+        return;
+      }
+
+      if (activity.category === 'maintenance') {
+        soundFX.playRepair();
+      } else if (
+        (activity.reward.crewHealthDelta ?? 0) > 0 ||
+        (activity.reward.crewRadiationDelta ?? 0) < 0
+      ) {
+        soundFX.playHealthRecovery();
+      } else {
+        soundFX.playHarvest();
+      }
+      if (hazardExposure.healthDelta < 0) {
+        soundFX.playHealthWarning(hazardExposure.healthDelta <= -8);
+      }
+
+      this.setState(nextState);
+      this.emitFeedback({
+        type: 'activity',
+        buildingId: activity.buildingId,
+        label: activity.title,
+        rewardSummary: activity.rewardSummary,
+      });
+      if (hazardExposure.healthDelta < 0) {
+        this.emitFeedback({
+          type: 'crew_hazard_damage',
+          delta: hazardExposure.healthDelta,
+          reason: hazardExposure.reason ?? 'Outdoor hazard exposure',
+        });
+      }
+      if (hazardCheck.cleared.length > 0) {
+        this.emitFeedback({
+          type: 'hazard_cleared',
+          labels: hazardCheck.cleared.map((h) => h.label),
+        });
+      }
     }
   }
 
@@ -1493,6 +1709,122 @@ class GameStore {
     });
   }
 
+  public startDailyActivity(activityId: string) {
+    if (
+      this.state.screen !== 'PLAYING' ||
+      this.state.sleepPhase !== 'idle' ||
+      this.state.sleepingRemaining > 0 ||
+      this.state.pendingAction?.phase === 'working' ||
+      isMajorEventCutsceneActive(this.state)
+    ) {
+      return;
+    }
+
+    const activity = this.state.dailyActivities.find((a) => a.id === activityId);
+    if (!activity) return;
+    const validation = validateDailyActivity(activity, this.state);
+    if (!validation.canExecute) return;
+
+    const taskKind = getActivityTaskAnimKind(activity.category);
+    const performInsideShelter = this.state.crew.inShelter && !activity.isOutdoor;
+    const targetBuildingId: BuildingId = performInsideShelter
+      ? 'radiation_shelter'
+      : activity.buildingId;
+
+    const action: PendingCrewAction = {
+      id: `act_${Date.now()}_${activity.id}`,
+      kind: 'activity',
+      buildingId: targetBuildingId,
+      activityId: activity.id,
+      activityCategory: activity.category,
+      taskKind,
+      assignedCrew: activity.assignedCrew,
+      label: activity.title,
+      phase: performInsideShelter ? 'working' : 'walking',
+      workDurationSec: activity.workDurationSec,
+      workRemainingSec: activity.workDurationSec,
+      timeHoursTotal: activity.durationHours,
+      timeHoursApplied: 0,
+    };
+
+    soundFX.playSelect();
+    this.setState({
+      ...this.state,
+      pendingAction: action,
+      ongoingTask: null,
+    });
+
+    if (performInsideShelter) {
+      soundFX.playWorkStart(taskKind);
+      this.emitFeedback({
+        type: 'work_started',
+        buildingId: targetBuildingId,
+        taskKind,
+        duration: activity.workDurationSec,
+        label: activity.title,
+      });
+      this.startWorkTicker();
+    } else {
+      this.emitFeedback({
+        type: 'task_assigned',
+        buildingId: targetBuildingId,
+        taskKind,
+        label: activity.title,
+      });
+    }
+  }
+
+  public toggleDailyActivityPriority(activityId: string) {
+    const idx = this.state.dailyActivities.findIndex((a) => a.id === activityId);
+    if (idx === -1) return;
+    const target = this.state.dailyActivities[idx];
+    if (target.status !== 'available') return;
+    soundFX.playSelect();
+    const nextList = this.state.dailyActivities.map((item) =>
+      item.id === activityId ? { ...item, prioritized: !item.prioritized } : item
+    );
+    this.setState({
+      ...this.state,
+      dailyActivities: nextList,
+    });
+  }
+
+  public ignoreDailyActivity(activityId: string) {
+    const target = this.state.dailyActivities.find((a) => a.id === activityId);
+    if (!target || target.status !== 'available') return;
+    soundFX.playSelect();
+    const nextList = this.state.dailyActivities.map((item) =>
+      item.id === activityId
+        ? { ...item, status: 'ignored' as const, prioritized: false }
+        : item
+    );
+    const nextCooldowns = {
+      ...(this.state.activityCooldowns ?? {}),
+      [target.templateId]: Math.max(
+        this.state.activityCooldowns?.[target.templateId] ?? 0,
+        this.state.day + 2
+      ),
+    };
+    this.setState({
+      ...this.state,
+      dailyActivities: nextList,
+      activityCooldowns: nextCooldowns,
+    });
+  }
+
+  public restoreIgnoredDailyActivity(activityId: string) {
+    const target = this.state.dailyActivities.find((a) => a.id === activityId);
+    if (!target || target.status !== 'ignored') return;
+    soundFX.playSelect();
+    const nextList = this.state.dailyActivities.map((item) =>
+      item.id === activityId ? { ...item, status: 'available' as const } : item
+    );
+    this.setState({
+      ...this.state,
+      dailyActivities: nextList,
+    });
+  }
+
   public completeEventCutscene() {
     if (
       this.state.screen !== 'PLAYING' ||
@@ -1523,27 +1855,20 @@ class GameStore {
     if (
       this.state.screen !== 'PLAYING' ||
       !this.state.activeEvent ||
+      this.state.activeEvent.animationRemaining > 0 ||
       this.state.sleepPhase === 'sleeping' ||
       isMajorEventCutsceneActive(this.state)
     ) {
       return;
     }
-    if (this.state.activeEvent.definition.choices?.length && !this.state.activeEvent.selectedChoiceId) {
-      return;
-    }
     this.stopEventAnimationTicker();
+    const { nextState } = finalizeExpiredActiveEvent(this.state);
     this.setState({
-      ...this.state,
+      ...nextState,
       crew:
-        this.state.sleepPhase === 'returning' && this.state.crew.inShelter
-          ? { ...this.state.crew, inShelter: false }
-          : this.state.crew,
-      activeEvent: {
-        ...this.state.activeEvent,
-        resolved: true,
-        animationRemaining: 0,
-        shelterUsed: Boolean(this.state.activeEvent.shelterUsed || this.state.crew.inShelter),
-      },
+        this.state.sleepPhase === 'returning' && nextState.crew.inShelter
+          ? { ...nextState.crew, inShelter: false }
+          : nextState.crew,
     });
   }
 
@@ -1797,14 +2122,21 @@ class GameStore {
         nextScars = [...nextScars, ...createScarsForEvent(current.activeEvent.definition, current.day)].slice(-28);
       }
 
-      nextEventHistory.push({
-        day: current.day,
-        eventId: current.activeEvent.definition.id,
-        title: current.activeEvent.definition.title,
-        severity: current.activeEvent.definition.severity,
-        choiceTitle: current.activeEvent.mitigationSummary || undefined,
-        outcomeSummary: eventRes.outcomeSummary,
-      });
+      if (
+        !nextEventHistory.some(
+          (entry) =>
+            entry.day === current.day && entry.eventId === current.activeEvent!.definition.id
+        )
+      ) {
+        nextEventHistory.push({
+          day: current.day,
+          eventId: current.activeEvent.definition.id,
+          title: current.activeEvent.definition.title,
+          severity: current.activeEvent.definition.severity,
+          choiceTitle: current.activeEvent.mitigationSummary || undefined,
+          outcomeSummary: eventRes.outcomeSummary,
+        });
+      }
     }
 
     // Advance/thaw temporary event malfunctions that already took effect today
@@ -1915,20 +2247,34 @@ class GameStore {
       lastDecisionNote: null,
     };
 
-    // Tick pre-existing lingering environmental hazards before spawning today's new post-event hazard
-    const preMitigated = clearMitigatedLingeringHazards(
-      current.lingeringHazards ?? [],
-      nextBuildings
+    // Tick pre-existing lingering environmental hazards from prior Sols; preserve any spawned today
+    const todayHazardSuffix = `_${current.day}`;
+    const hazardsFromPrevSols = (current.lingeringHazards ?? []).filter(
+      (h) => !h.id.endsWith(todayHazardSuffix)
     );
+    const todaysSpawnedHazards = (current.lingeringHazards ?? []).filter((h) =>
+      h.id.endsWith(todayHazardSuffix)
+    );
+    const preMitigated = clearMitigatedLingeringHazards(hazardsFromPrevSols, nextBuildings);
     const lingeringTick = tickLingeringHazardsEndOfDay(
       preMitigated.remaining,
       current.difficulty,
       current.crew.inShelter,
       nextBuildings.main_habitat.status === 'operational'
     );
+    const preMitigatedToday = clearMitigatedLingeringHazards(
+      todaysSpawnedHazards,
+      nextBuildings
+    ).remaining;
 
     let nextLingeringHazards = [...lingeringTick.remaining];
-    if (current.activeEvent) {
+    for (const h of preMitigatedToday) {
+      nextLingeringHazards = [
+        ...nextLingeringHazards.filter((existing) => existing.kind !== h.kind),
+        h,
+      ];
+    }
+    if (current.activeEvent && !current.activeEvent.aftermathApplied) {
       const spawnedHazard = createLingeringHazardForEvent(
         current.activeEvent.definition,
         current.day
@@ -2137,7 +2483,7 @@ class GameStore {
         ? Array.from(new Set([...(current.gilAnnouncementDays ?? []), nextDay]))
         : current.gilAnnouncementDays ?? [];
 
-    this.setState({
+    const nextSolBaseState: GameState = {
       ...current,
       day: nextDay,
       hoursRemaining: MAX_DAILY_HOURS,
@@ -2161,6 +2507,13 @@ class GameStore {
       lastDaySummary: daySummary,
       gilDayHint: null,
       gilAnnouncementDays: nextAnnouncementDays,
+      dailyActivities: [],
+    };
+    const nextDailyActivities = generateDailyActivitiesForSol(nextSolBaseState);
+
+    this.setState({
+      ...nextSolBaseState,
+      dailyActivities: nextDailyActivities,
     });
     this.emitFeedback({ type: 'end_day', day: nextDay, buildingImpacts });
     if (totalSummaryHealthDelta > 0) {

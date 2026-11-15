@@ -12,6 +12,7 @@ import { ActiveEvent } from '../types/event';
 import { DifficultyLevel, MissionModifiers, PlantedCrop } from '../types/game';
 import { ResourceAmounts, ResourceNetRate, ResourceType } from '../types/resource';
 import { getBuildingEffectiveness } from './buildings';
+import { isEventOfficiallyActive } from './events';
 
 export function createInitialResources(
   difficulty: DifficultyLevel = 'medium'
@@ -89,7 +90,7 @@ export function calculateDailyRates(params: {
   if (modifiers?.solarOutputBonusPct) {
     solarOutput *= Math.max(0.5, 1 + modifiers.solarOutputBonusPct / 100);
   }
-  if (activeEvent?.definition.solarPenaltyFactor) {
+  if (isEventOfficiallyActive(activeEvent) && activeEvent?.definition.solarPenaltyFactor) {
     solarOutput *= Math.max(0.25, 1 - activeEvent.definition.solarPenaltyFactor);
   }
   production.energy += Math.round(solarOutput);
@@ -195,7 +196,7 @@ export function isMartianDaytimeHour(hoursElapsed: number): boolean {
 }
 
 export function isSunnyMartianWeather(activeEvent: ActiveEvent | null): boolean {
-  if (!activeEvent) return true;
+  if (!isEventOfficiallyActive(activeEvent) || !activeEvent) return true;
   if (
     activeEvent.definition.phenomenon === 'global_dust_storm' ||
     activeEvent.definition.phenomenon === 'dust_devils'
@@ -229,7 +230,10 @@ export function evaluateSolarHourlyMode(
   ) {
     return { mode: 'stopped', reason: 'Storm disrupted — clean/repair (0/hr)' };
   }
-  if (activeEvent?.definition.phenomenon === 'global_dust_storm') {
+  if (
+    isEventOfficiallyActive(activeEvent) &&
+    activeEvent?.definition.phenomenon === 'global_dust_storm'
+  ) {
     return { mode: 'stopped', reason: 'Global dust blackout (0/hr)' };
   }
 
@@ -366,7 +370,7 @@ export function calculateEnergyGenerationStats(params: {
         ? Math.max(0.5, 1 + modifiers.solarOutputBonusPct / 100)
         : 1;
     const weatherFactor =
-      isSolar && activeEvent?.definition.solarPenaltyFactor
+      isSolar && isEventOfficiallyActive(activeEvent) && activeEvent?.definition.solarPenaltyFactor
         ? Math.max(0.25, 1 - activeEvent.definition.solarPenaltyFactor)
         : 1;
 

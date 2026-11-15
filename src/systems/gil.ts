@@ -182,17 +182,68 @@ export function getContextualGilMessage(state: GameState): GilMessage {
     }
   }
 
-  // 0c. Crew currently walking to or actively performing a task at a building
+  // 0c. Crew currently walking to or actively performing a task or daily activity
   if (state.pendingAction) {
     const bName = BUILDING_DEFINITIONS[state.pendingAction.buildingId].shortName;
     if (state.pendingAction.phase === 'walking') {
       return {
         id: `walk_${state.pendingAction.id}`,
         speaker: 'GIL',
-        headline: `Heading to ${bName}!`,
-        body: `Heading over to ${bName} to get started!`,
+        headline:
+          state.pendingAction.kind === 'activity'
+            ? `${state.pendingAction.assignedCrew === 'Player' ? 'Heading' : state.pendingAction.assignedCrew + ' Heading'} Over!`
+            : `Heading to ${bName}!`,
+        body:
+          state.pendingAction.kind === 'activity'
+            ? `Heading to ${bName} for ${state.pendingAction.label}!`
+            : `Heading over to ${bName} to get started!`,
         urgency: 'info',
         emotion: 'excited',
+      };
+    }
+    if (state.pendingAction.kind === 'activity') {
+      const cat = state.pendingAction.activityCategory;
+      const crewLabel =
+        state.pendingAction.assignedCrew === 'Player'
+          ? 'The crew is'
+          : `${state.pendingAction.assignedCrew} is`;
+      if (cat === 'research') {
+        return {
+          id: `work_${state.pendingAction.id}`,
+          speaker: 'GIL',
+          headline: 'Running Mars Science!',
+          body: `${crewLabel} logging live science data at ${bName} — "${state.pendingAction.label}"!`,
+          urgency: 'info',
+          emotion: 'excited',
+        };
+      }
+      if (cat === 'exploration') {
+        return {
+          id: `work_${state.pendingAction.id}`,
+          speaker: 'GIL',
+          headline: 'Field Recon Underway!',
+          body: `${crewLabel} surveying Jezero terrain for "${state.pendingAction.label}"!`,
+          urgency: 'info',
+          emotion: 'excited',
+        };
+      }
+      if (cat === 'crew') {
+        return {
+          id: `work_${state.pendingAction.id}`,
+          speaker: 'GIL',
+          headline: 'Crew Care & Wellness!',
+          body: `${crewLabel} leading "${state.pendingAction.label}" to keep everyone healthy!`,
+          urgency: 'info',
+          emotion: 'relieved',
+        };
+      }
+      return {
+        id: `work_${state.pendingAction.id}`,
+        speaker: 'GIL',
+        headline: 'Preventive Checkup!',
+        body: `${crewLabel} fine-tuning ${bName} with "${state.pendingAction.label}"!`,
+        urgency: 'info',
+        emotion: 'happy',
       };
     }
     if (state.pendingAction.taskKind === 'plant') {
@@ -264,8 +315,8 @@ export function getContextualGilMessage(state: GameState): GilMessage {
     };
   }
 
-  // 1. Urgent active environmental warning (after animation settled)
-  if (state.activeEvent && !state.activeEvent.resolved) {
+  // 1. Urgent active environmental warning (only while event timer is still active)
+  if (isEventOfficiallyActive(state.activeEvent) && state.activeEvent) {
     const evt = state.activeEvent.definition;
     if (evt.radiationLevel && !state.crew.inShelter) {
       return {

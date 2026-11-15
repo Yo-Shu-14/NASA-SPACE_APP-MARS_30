@@ -24,7 +24,7 @@ import {
   TerrainScar,
 } from '../types/game';
 import { ResourceAmounts, ResourceType } from '../types/resource';
-import { applyBuildingConditionChange } from './buildings';
+import { applyBuildingConditionChange, calculateResourceCapacities } from './buildings';
 import { clampResourcesToCapacity, deductResources } from './resources';
 
 export type { BuildingEventImpact };
@@ -133,6 +133,7 @@ export function createActiveEventForDay(
     animationRemaining: animationDuration,
     initialDamageApplied: false,
     radiationPenaltyApplied: false,
+    aftermathApplied: false,
   };
 }
 
@@ -255,7 +256,9 @@ export function isShelterRequiredEvent(activeEvent?: ActiveEvent | null): boolea
 }
 
 export function isEventOfficiallyActive(activeEvent?: ActiveEvent | null): boolean {
-  return Boolean(activeEvent && !activeEvent.resolved);
+  return Boolean(
+    activeEvent && !activeEvent.resolved && activeEvent.animationRemaining > 0
+  );
 }
 
 export function isMajorEventCutsceneActive(
@@ -1201,6 +1204,46 @@ export function resolveEventAtEndOfDay(params: {
   } = params;
   const def: EventDefinition = activeEvent.definition;
 
+  if (activeEvent.aftermathApplied) {
+    const summaryParts: string[] = [];
+    if (activeEvent.mitigationSummary) {
+      summaryParts.push(`Decision: ${activeEvent.mitigationSummary}`);
+    }
+    if (def.radiationLevel && def.radiationLevel > 0) {
+      const protectedInShelter = Boolean(
+        isCrewProtectedByShelter(crew, buildings) || activeEvent.shelterUsed
+      );
+      summaryParts.push(
+        protectedInShelter
+          ? 'Crew sheltered during solar radiation spike'
+          : `Crew caught outside Radiation Shelter (-${getRadiationOutsideDamageForEvent(def, difficulty)} HP)`
+      );
+    } else if ((activeEvent.totalHazardHealthLost ?? 0) > 0) {
+      summaryParts.push(`Crew outside took -${activeEvent.totalHazardHealthLost}% health`);
+    }
+    if (def.targetBuildings?.length) {
+      const workshop = buildings.maintenance_facility;
+      const workshopOperational =
+        workshop.status === 'operational' &&
+        !(workshop.malfunctionDaysRemaining && workshop.malfunctionDaysRemaining > 0);
+      summaryParts.push(
+        workshopOperational
+          ? 'Workshop maintenance softened structural wear'
+          : 'Equipment sustained weather wear'
+      );
+    }
+    return {
+      buildings: { ...buildings },
+      resources: { ...resources },
+      radiationGain: 0,
+      crewEnergyPenalty: 0,
+      crewConditionPenalty: 0,
+      buildingImpacts: activeEvent.appliedBuildingImpacts ?? [],
+      consumedExtraDust: false,
+      outcomeSummary: summaryParts.join(' · ') || 'Weather event passed',
+    };
+  }
+
   let nextBuildings = { ...buildings };
   let nextResources = { ...resources };
   const impactMap = new Map<BuildingId, BuildingEventImpact>();
@@ -1341,6 +1384,163 @@ export function resolveEventAtEndOfDay(params: {
   };
 }
 
+/**
+ * Immediately ends an active event when its 15s (minor) / 20s (major) timer expires:
+ * stops active event animations/effects while preserving all lasting consequences
+ * (damaged/inactive/malfunctioning buildings, reduced crew health/stamina, radiation,
+ * resource losses, terrain scars, and persistent lingering hazards).
+ */
+export function finalizeExpiredActiveEvent(state: GameState): {
+  nextState: GameState;
+  buildingImpacts: BuildingEventImpact[];
+  healthDelta: number;
+  spawnedHazardLabel: string | null;
+} {
+  const evt = state.activeEvent;
+  if (!evt || evt.resolved) {
+    return { nextState: state, buildingImpacts: [], healthDelta: 0, spawnedHazardLabel: null };
+  }
+
+  let workingState: GameState = {
+    ...state,
+    activeEvent: {
+      ...evt,
+      cutsceneCompleted: true,
+    },
+  };
+
+  let buildingImpacts: BuildingEventImpact[] = evt.appliedBuildingImpacts ?? [];
+  let healthDelta = 0;
+
+  if (!evt.initialDamageApplied) {
+    const impactRes = applyInitialEventImpact(workingState);
+    workingState = impactRes.nextState;
+    buildingImpacts = impactRes.buildingImpacts;
+    healthDelta += impactRes.healthDelta;
+  }
+
+  const resolvedEvt = workingState.activeEvent!;
+  const def = resolvedEvt.definition;
+  let nextScars = [...(workingState.environmentalScars ?? [])];
+  if (!nextScars.some((s) => s.day === workingState.day && s.eventId === def.id)) {
+    nextScars = [...nextScars, ...createScarsForEvent(def, workingState.day)].slice(-28);
+  }
+
+  let nextLingeringHazards = [...(workingState.lingeringHazards ?? [])];
+  let spawnedHazardLabel: string | null = null;
+  let nextEventHistory = [...workingState.eventHistory];
+
+  if (!resolvedEvt.aftermathApplied) {
+    const aftermath = resolveEventAtEndOfDay({
+      activeEvent: resolvedEvt,
+      buildings: workingState.buildings,
+      resources: workingState.resources,
+      crew: workingState.crew,
+      modifiers: workingState.modifiers,
+      seed: workingState.seed,
+      day: workingState.day,
+      difficulty: workingState.difficulty,
+    });
+
+    const nextCapacities = calculateResourceCapacities(
+      aftermath.buildings,
+      workingState.difficulty
+    );
+    const nextResources = clampResourcesToCapacity(aftermath.resources, nextCapacities);
+    const nextCondition = Math.max(0, workingState.crew.condition - aftermath.crewConditionPenalty);
+    healthDelta -= workingState.crew.condition - nextCondition;
+
+    const spawnedHazard = createLingeringHazardForEvent(def, workingState.day);
+    if (spawnedHazard) {
+      const checkedSpawn = clearMitigatedLingeringHazards([spawnedHazard], aftermath.buildings);
+      if (checkedSpawn.remaining.length > 0) {
+        nextLingeringHazards = [
+          ...nextLingeringHazards.filter((h) => h.kind !== spawnedHazard.kind),
+          spawnedHazard,
+        ];
+        spawnedHazardLabel = spawnedHazard.label;
+      }
+    }
+
+    if (
+      !nextEventHistory.some(
+        (entry) => entry.day === workingState.day && entry.eventId === def.id
+      )
+    ) {
+      nextEventHistory = [
+        ...nextEventHistory,
+        {
+          day: workingState.day,
+          eventId: def.id,
+          title: def.title,
+          severity: def.severity,
+          choiceTitle: resolvedEvt.mitigationSummary || undefined,
+          outcomeSummary: aftermath.outcomeSummary,
+        },
+      ];
+    }
+
+    workingState = {
+      ...workingState,
+      buildings: aftermath.buildings,
+      capacities: nextCapacities,
+      resources: nextResources,
+      crew: {
+        ...workingState.crew,
+        condition: nextCondition,
+        energy: Math.max(0, workingState.crew.energy - aftermath.crewEnergyPenalty),
+        radiationExposure: Math.min(
+          100,
+          workingState.crew.radiationExposure + aftermath.radiationGain
+        ),
+      },
+      modifiers: {
+        ...workingState.modifiers,
+        extraDustNextStorm: aftermath.consumedExtraDust
+          ? 0
+          : workingState.modifiers.extraDustNextStorm,
+      },
+      environmentalScars: nextScars,
+      lingeringHazards: nextLingeringHazards,
+      eventHistory: nextEventHistory,
+      activeEvent: {
+        ...resolvedEvt,
+        resolved: true,
+        animationRemaining: 0,
+        aftermathApplied: true,
+        appliedBuildingImpacts: aftermath.buildingImpacts,
+        shelterUsed: Boolean(resolvedEvt.shelterUsed || workingState.crew.inShelter),
+      },
+    };
+  } else {
+    const nextCapacities = calculateResourceCapacities(
+      workingState.buildings,
+      workingState.difficulty
+    );
+    workingState = {
+      ...workingState,
+      capacities: nextCapacities,
+      resources: clampResourcesToCapacity(workingState.resources, nextCapacities),
+      environmentalScars: nextScars,
+      activeEvent: {
+        ...resolvedEvt,
+        resolved: true,
+        animationRemaining: 0,
+        aftermathApplied: true,
+        appliedBuildingImpacts: buildingImpacts,
+        shelterUsed: Boolean(resolvedEvt.shelterUsed || workingState.crew.inShelter),
+      },
+    };
+  }
+
+  return {
+    nextState: workingState,
+    buildingImpacts,
+    healthDelta,
+    spawnedHazardLabel,
+  };
+}
+
 export interface OutdoorHazardSummary {
   hasHazard: boolean;
   isRadiation: boolean;
@@ -1405,7 +1605,7 @@ export function applyOutdoorActivityHazardConsequence(
   const hoursFactor = Math.min(1.5, Math.max(0.75, workHours / 2));
 
   const activeEvt = state.activeEvent;
-  if (activeEvt && !activeEvt.resolved) {
+  if (isEventOfficiallyActive(activeEvt) && activeEvt) {
     const def = activeEvt.definition;
     const isRadiation = Boolean(def.radiationLevel && def.radiationLevel > 0);
 

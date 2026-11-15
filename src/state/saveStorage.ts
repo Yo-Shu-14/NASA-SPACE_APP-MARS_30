@@ -13,6 +13,12 @@ import { calculateResourceCapacities, createInitialBuildings } from '../systems/
 import { clampResourcesToCapacity } from '../systems/resources';
 import { TOTAL_TUTORIAL_STEPS } from '../systems/tutorial';
 import {
+  ActivityCategory,
+  CrewMemberId,
+  DailyActivityInstance,
+  DailyActivityStatus,
+} from '../types/activity';
+import {
   BuildingId,
   BuildingMalfunctionKind,
   BuildingState,
@@ -245,13 +251,17 @@ function sanitizeActiveEvent(rawEvent: unknown): ActiveEvent | null {
   if (typeof defId !== 'string' || !(defId in EVENT_DEFINITIONS)) return null;
 
   const canonicalDef = EVENT_DEFINITIONS[defId];
-  const animationDuration = clampFinite(rawEvent.animationDuration, 0, 120, 0);
-  const animationRemaining = clampFinite(rawEvent.animationRemaining, 0, animationDuration, 0);
+  const animationDuration =
+    canonicalDef.severity === 'major' || canonicalDef.severity === 'super_major' ? 20 : 15;
+  const resolved = Boolean(rawEvent.resolved);
+  const animationRemaining = resolved
+    ? 0
+    : clampFinite(rawEvent.animationRemaining, 0, animationDuration, animationDuration);
 
   return {
     definition: canonicalDef,
     dayTriggered: clampInt(rawEvent.dayTriggered, 1, MAX_MISSION_DAYS, 1),
-    resolved: Boolean(rawEvent.resolved),
+    resolved,
     cutsceneCompleted:
       typeof rawEvent.cutsceneCompleted === 'boolean' ? rawEvent.cutsceneCompleted : undefined,
     shelterUsed: Boolean(rawEvent.shelterUsed),
@@ -269,6 +279,8 @@ function sanitizeActiveEvent(rawEvent: unknown): ActiveEvent | null {
       typeof rawEvent.radiationPenaltyApplied === 'boolean'
         ? rawEvent.radiationPenaltyApplied
         : undefined,
+    aftermathApplied:
+      typeof rawEvent.aftermathApplied === 'boolean' ? rawEvent.aftermathApplied : undefined,
     appliedBuildingImpacts: rawEvent.appliedBuildingImpacts
       ? sanitizeBuildingImpacts(rawEvent.appliedBuildingImpacts)
       : undefined,
@@ -438,6 +450,83 @@ function sanitizeGilMessage(raw: unknown): GameState['gilDayHint'] {
   return raw as unknown as GameState['gilDayHint'];
 }
 
+const VALID_ACTIVITY_CATEGORIES = new Set<ActivityCategory>([
+  'maintenance',
+  'research',
+  'exploration',
+  'crew',
+]);
+const VALID_ACTIVITY_STATUSES = new Set<DailyActivityStatus>([
+  'available',
+  'completed',
+  'ignored',
+]);
+const VALID_CREW_IDS = new Set<CrewMemberId>(['Player', 'Brent', 'MJ', 'Darryl', 'Magno']);
+
+function sanitizeDailyActivities(raw: unknown): DailyActivityInstance[] {
+  if (!Array.isArray(raw)) return [];
+  const validBuildingIds = new Set<string>(BUILDING_LIST.map((b) => b.id));
+  const items: DailyActivityInstance[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    if (
+      typeof item.id !== 'string' ||
+      typeof item.templateId !== 'string' ||
+      typeof item.title !== 'string' ||
+      typeof item.category !== 'string' ||
+      !VALID_ACTIVITY_CATEGORIES.has(item.category as ActivityCategory) ||
+      typeof item.buildingId !== 'string' ||
+      !validBuildingIds.has(item.buildingId)
+    ) {
+      continue;
+    }
+    const status: DailyActivityStatus =
+      typeof item.status === 'string' && VALID_ACTIVITY_STATUSES.has(item.status as DailyActivityStatus)
+        ? (item.status as DailyActivityStatus)
+        : 'available';
+    const assignedCrew: CrewMemberId =
+      typeof item.assignedCrew === 'string' && VALID_CREW_IDS.has(item.assignedCrew as CrewMemberId)
+        ? (item.assignedCrew as CrewMemberId)
+        : 'Player';
+
+    items.push({
+      id: item.id,
+      templateId: item.templateId,
+      dayGenerated: clampInt(item.dayGenerated, 1, MAX_MISSION_DAYS, 1),
+      category: item.category as ActivityCategory,
+      title: item.title,
+      shortDesc: typeof item.shortDesc === 'string' ? item.shortDesc : '',
+      relevanceReason: typeof item.relevanceReason === 'string' ? item.relevanceReason : '',
+      buildingId: item.buildingId as BuildingId,
+      isOutdoor: Boolean(item.isOutdoor),
+      assignedCrew,
+      skillLabel: typeof item.skillLabel === 'string' ? item.skillLabel : 'Crew Ops',
+      skillBonusLabel: typeof item.skillBonusLabel === 'string' ? item.skillBonusLabel : '',
+      durationHours: clampFinite(item.durationHours, 1, 6, 1),
+      workDurationSec: clampFinite(item.workDurationSec, 1, 10, 2.2),
+      crewEnergyCost: clampInt(item.crewEnergyCost, 0, 50, 0),
+      resourceCost: isRecord(item.resourceCost) ? (item.resourceCost as DailyActivityInstance['resourceCost']) : {},
+      reward: isRecord(item.reward) ? (item.reward as DailyActivityInstance['reward']) : {},
+      rewardSummary: typeof item.rewardSummary === 'string' ? item.rewardSummary : '',
+      cooldownSols: clampInt(item.cooldownSols, 1, 20, 4),
+      status,
+      prioritized: Boolean(item.prioritized),
+    });
+  }
+  return items;
+}
+
+function sanitizeActivityCooldowns(raw: unknown): Record<string, number> {
+  if (!isRecord(raw)) return {};
+  const result: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      result[k] = clampInt(v, 1, MAX_MISSION_DAYS + 30, 1);
+    }
+  }
+  return result;
+}
+
 export function sanitizeAndRestoreGameState(rawState: unknown): GameState | null {
   if (!isRecord(rawState)) return null;
 
@@ -558,6 +647,9 @@ export function sanitizeAndRestoreGameState(rawState: unknown): GameState | null
     totalTasksCompleted: clampInt(rawState.totalTasksCompleted, 0, 100000, 0),
     majorTasksCompleted: clampInt(rawState.majorTasksCompleted, 0, 100000, 0),
     minorTasksCompleted: clampInt(rawState.minorTasksCompleted, 0, 100000, 0),
+    dailyActivities: sanitizeDailyActivities(rawState.dailyActivities),
+    activityCooldowns: sanitizeActivityCooldowns(rawState.activityCooldowns),
+    dailyActivitiesCompleted: clampInt(rawState.dailyActivitiesCompleted, 0, 100000, 0),
     keyDecisions: sanitizeStringArray(rawState.keyDecisions),
     seed,
     audioMuted: Boolean(rawState.audioMuted),

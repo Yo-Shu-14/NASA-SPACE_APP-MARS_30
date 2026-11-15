@@ -2545,6 +2545,7 @@ export class OutpostScene extends Phaser.Scene {
         !this.wasDragged &&
         currentState.screen === 'PLAYING' &&
         currentState.activeEvent &&
+        !currentState.activeEvent.resolved &&
         currentState.activeEvent.animationRemaining > 0
       ) {
         this.spawnEventTapRipple(pointer.worldX, pointer.worldY, currentState.activeEvent.definition.id);
@@ -2774,7 +2775,10 @@ export class OutpostScene extends Phaser.Scene {
     this.renderInfrastructureConduits(state, lighting, rates.hasPowerForLifeSupport, solarOutputFactor);
 
     // Event transition triggers (weather tint rendered smoothly in update())
-    const visibleActiveEvent = state.lastDaySummary ? null : state.activeEvent;
+    const visibleActiveEvent =
+      state.lastDaySummary || !isEventOfficiallyActive(state.activeEvent)
+        ? null
+        : state.activeEvent;
     const activeEvent = visibleActiveEvent;
     const eventKey = activeEvent
       ? `${activeEvent.dayTriggered}:${activeEvent.definition.id}`
@@ -3200,12 +3204,19 @@ export class OutpostScene extends Phaser.Scene {
           ease: 'Sine.easeOut',
         });
       }
-    } else if (evt.type === 'task' || evt.type === 'plant' || evt.type === 'harvest') {
+    } else if (
+      evt.type === 'task' ||
+      evt.type === 'plant' ||
+      evt.type === 'harvest' ||
+      evt.type === 'activity'
+    ) {
       const kind: ActionAnimKind =
         evt.type === 'plant'
           ? 'plant'
           : evt.type === 'harvest'
           ? 'harvest'
+          : evt.type === 'activity'
+          ? 'clean'
           : evt.taskKind ?? 'repair';
 
       const labelText =
@@ -3213,6 +3224,8 @@ export class OutpostScene extends Phaser.Scene {
           ? `+${evt.amount} Food!`
           : evt.type === 'plant'
           ? 'Seeds Planted!'
+          : evt.type === 'activity'
+          ? evt.rewardSummary || 'Activity Done!'
           : kind === 'clean'
           ? 'Sparkling Clean!'
           : kind === 'restore'
@@ -4130,31 +4143,26 @@ export class OutpostScene extends Phaser.Scene {
     // Draw contextual building construction, planting, cleaning & repair visual animations + walking marker + sleeping Zs
     this.renderActiveWorkAnimation(isSleeping, state);
 
-    const activeEvent = state.activeEvent;
+    const isCutsceneOngoing = isMajorEventCutsceneActive(state);
+    const eventRunningNow = isEventOfficiallyActive(state.activeEvent);
+    const activeEvent = eventRunningNow ? state.activeEvent : null;
     const activeEventId = activeEvent?.definition.id ?? null;
     const animDuration = Math.max(1, activeEvent?.animationDuration ?? 1);
     const animRemaining = activeEvent?.animationRemaining ?? 0;
     const animElapsed = Math.max(0, animDuration - animRemaining);
-    const isCutsceneOngoing = isMajorEventCutsceneActive(state);
-    const fadeIn = Phaser.Math.Clamp(animElapsed / 1.6, 0, 1);
+    const fadeIn = Phaser.Math.Clamp(animElapsed / 1.4, 0, 1);
     const fadeOut =
       animRemaining > 0
-        ? Phaser.Math.Clamp(animRemaining / 2.2, 0, 1)
-        : isCutsceneOngoing
-        ? 0.58
-        : 0.32;
+        ? Phaser.Math.Clamp(animRemaining / 1.6, 0, 1)
+        : 0;
     const eventStrength = activeEvent
       ? this.reducedMotion
         ? animRemaining > 0
           ? 0.85
-          : isCutsceneOngoing
-          ? 0.55
-          : 0.3
-        : animRemaining > 0
-        ? fadeIn * fadeOut
+          : 0
         : isCutsceneOngoing
         ? 0.58
-        : 0.32
+        : fadeIn * fadeOut
       : 0;
 
     // Smooth atmospheric weather tint overlay
@@ -4385,7 +4393,7 @@ export class OutpostScene extends Phaser.Scene {
       return;
     }
 
-    const activeEvent = state.activeEvent;
+    const activeEvent = isEventOfficiallyActive(state.activeEvent) ? state.activeEvent : null;
     if (!activeEvent) {
       const primaryLingering = (state.lingeringHazards ?? [])[0];
       if (primaryLingering) {
@@ -4752,13 +4760,14 @@ export class OutpostScene extends Phaser.Scene {
       this.renderEndingEffects(g, state, this.activeEndingKind);
     }
 
-    if (!state.activeEvent) return;
+    const liveEvent = isEventOfficiallyActive(state.activeEvent) ? state.activeEvent : null;
+    if (!liveEvent) return;
 
     const env = Math.max(0.32, flags.eventStrength);
-    const targets = state.activeEvent.definition.targetBuildings ?? [];
+    const targets = liveEvent.definition.targetBuildings ?? [];
     const targetPulse = 0.5 + 0.5 * Math.sin(this.elapsedTime * 5.2);
     const sevColor =
-      state.activeEvent.definition.severity === 'minor' ? 0xf4c552 : PALETTE.alertRed;
+      liveEvent.definition.severity === 'minor' ? 0xf4c552 : PALETTE.alertRed;
 
     // Clear target hazard reticle + floating warning diamond on systems at risk during active event
     for (const bId of targets) {
@@ -5036,10 +5045,10 @@ export class OutpostScene extends Phaser.Scene {
     }
 
     // Shared Radiation Alert border + Shelter Beacon whenever radiation > 0
-    if (flags.isRadiation) {
+    if (flags.isRadiation && liveEvent) {
       const pulse = 0.5 + 0.5 * Math.sin(this.elapsedTime * 5.2);
       const borderColor =
-        state.activeEvent.definition.severity === 'minor' ? 0xf4c552 : PALETTE.alertRed;
+        liveEvent.definition.severity === 'minor' ? 0xf4c552 : PALETTE.alertRed;
       g.lineStyle(6.5, borderColor, (0.3 + pulse * 0.32) * Math.min(1, env + 0.25));
       g.strokeRoundedRect(6, 6, WORLD_WIDTH - 12, WORLD_HEIGHT - 12, 12);
 

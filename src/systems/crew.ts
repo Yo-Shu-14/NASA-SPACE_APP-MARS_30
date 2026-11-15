@@ -86,7 +86,12 @@ export function resolveDailyCrewRecovery(params: {
 
   const nextRadiation = Math.max(
     0,
-    Math.min(100, crew.radiationExposure + radiationGain - (radiationGain === 0 ? 1 : 0))
+    Math.min(
+      100,
+      crew.radiationExposure +
+        radiationGain -
+        (radiationGain === 0 && !skipRadiationConditionPenalty ? 1 : 0)
+    )
   );
 
   let conditionDelta = 0;

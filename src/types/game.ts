@@ -1,3 +1,4 @@
+import { ActivityCategory, DailyActivityInstance } from './activity';
 import { BuildingId, BuildingState } from './building';
 import { ActiveEvent, BuildingEventImpact, EventLogEntry } from './event';
 import { ResourceAmounts } from './resource';
@@ -179,10 +180,12 @@ export type SleepPhase = 'idle' | 'returning' | 'sleeping';
 
 export interface PendingCrewAction {
   id: string;
-  kind: 'task' | 'plant' | 'harvest';
+  kind: 'task' | 'plant' | 'harvest' | 'activity';
   buildingId: BuildingId;
   taskId?: string;
   cropId?: string;
+  activityId?: string;
+  activityCategory?: ActivityCategory;
   taskKind: 'restore' | 'repair' | 'clean' | 'plant' | 'harvest';
   assignedCrew: 'Player' | 'Brent' | 'MJ' | 'Darryl' | 'Magno';
   label: string;
@@ -231,6 +234,9 @@ export interface GameState {
   totalTasksCompleted: number;
   majorTasksCompleted: number;
   minorTasksCompleted: number;
+  dailyActivities: DailyActivityInstance[];
+  activityCooldowns: Record<string, number>;
+  dailyActivitiesCompleted: number;
   keyDecisions: string[];
   seed: number;
   audioMuted: boolean;

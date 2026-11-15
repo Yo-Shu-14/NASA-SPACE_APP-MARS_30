@@ -103,6 +103,7 @@ export interface ActiveEvent {
   animationRemaining: number;
   initialDamageApplied?: boolean;
   radiationPenaltyApplied?: boolean;
+  aftermathApplied?: boolean;
   appliedBuildingImpacts?: BuildingEventImpact[];
   hazardDrainRemainder?: number;
   totalHazardHealthLost?: number;

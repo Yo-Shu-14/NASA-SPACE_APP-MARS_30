@@ -93,7 +93,7 @@ export function GameHUD({
   const [tacticalOrdersOpen, setTacticalOrdersOpen] = useState(false);
 
   const visibleActiveEvent =
-    state.activeEvent && !state.activeEvent.resolved && !state.lastDaySummary
+    isEventOfficiallyActive(state.activeEvent) && !state.lastDaySummary
       ? state.activeEvent
       : null;
 
@@ -253,6 +253,9 @@ export function GameHUD({
   const activeOutdoorHazard = !cutsceneActive && isEventOfficiallyActive(state.activeEvent) && !crewProtected;
   const lingeringOutdoorHazard = !cutsceneActive && lingeringHazards.length > 0 && !crewProtected;
   const hazardExposed = activeOutdoorHazard || lingeringOutdoorHazard;
+  const availableActivityCount = (state.dailyActivities ?? []).filter(
+    (a) => a.status === 'available'
+  ).length;
   const tutorialStep = getCurrentTutorialStep(state);
 
   return (
@@ -286,11 +289,18 @@ export function GameHUD({
               ) : (
                 <ClipboardList className="w-5 h-5 mobile-landscape:w-4 mobile-landscape:h-4 lg:w-5 lg:h-5 text-[#B94F32] shrink-0" aria-hidden="true" />
               )}
-              {!leftDrawerOpen && availableTaskCount > 0 && (
+              {!leftDrawerOpen && availableTaskCount > 0 ? (
                 <span className="absolute -top-1.5 -right-1.5 min-w-[18px] lg:min-w-[20px] h-[18px] lg:h-5 px-1 rounded-full bg-[#718B78] text-[#FAF0DC] border-2 border-[#292C2B] text-[10px] font-extrabold leading-none flex items-center justify-center tabular-nums">
                   {availableTaskCount}
                 </span>
-              )}
+              ) : !leftDrawerOpen && availableActivityCount > 0 ? (
+                <span
+                  title={`${availableActivityCount} optional Daily Colony Ops available`}
+                  className="absolute -top-1.5 -right-1.5 min-w-[18px] lg:min-w-[20px] h-[18px] lg:h-5 px-1 rounded-full bg-[#477C9B] text-[#FAF0DC] border-2 border-[#292C2B] text-[10px] font-extrabold leading-none flex items-center justify-center tabular-nums"
+                >
+                  {availableActivityCount}
+                </span>
+              ) : null}
             </button>
             {tutorialStep?.highlight === 'tasks_drawer' && !leftDrawerOpen && (
               <div

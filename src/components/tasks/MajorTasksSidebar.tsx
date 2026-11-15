@@ -7,15 +7,20 @@ import {
   CheckCircle2,
   ClipboardList,
   Clock,
+  Compass,
   Cpu,
   Droplets,
+  FlaskConical,
+  HeartPulse,
   Loader2,
   Lock,
   MapPin,
   Moon,
+  Play,
   Shield,
   Sparkles,
   Sprout,
+  Star,
   Sun,
   Wrench,
   X,
@@ -25,14 +30,20 @@ import {
   BATTERY_STORAGE_CAPACITY_BY_DIFFICULTY,
   getFacilityDailyProduction,
 } from '../../data/balance';
+import { CREW_SPECIALISTS } from '../../data/activities';
 import { BUILDING_DEFINITIONS, BUILDING_LIST } from '../../data/buildings';
 import { CROP_MAP } from '../../data/crops';
 import { TOTAL_DAY_HOURS } from '../../data/mission';
 import { RESOURCE_CONFIGS, RESOURCE_ORDER } from '../../data/resources';
 import { TASK_DEFINITIONS } from '../../data/tasks';
+import {
+  getActivityCrewAvailability,
+  validateDailyActivity,
+} from '../../systems/activities';
 import { getBuildingUnlockStatus } from '../../systems/buildings';
 import {
   getActiveOutdoorHazardSummary,
+  isEventOfficiallyActive,
   isMajorEventCutsceneActive,
 } from '../../systems/events';
 import {
@@ -40,6 +51,7 @@ import {
   calculateEnergyGenerationStats,
 } from '../../systems/resources';
 import { validateTask } from '../../systems/tasks';
+import { ActivityCategory, DailyActivityInstance } from '../../types/activity';
 import { BuildingCategory, BuildingId } from '../../types/building';
 import { DifficultyLevel, GameState } from '../../types/game';
 import { BuildingIcon } from '../icons/GameIcons';
@@ -51,6 +63,10 @@ interface MajorTasksSidebarProps {
   onRestCrew?: () => void;
   onToggleShelter?: () => void;
   onEndDay?: () => void;
+  onStartActivity?: (activityId: string) => void;
+  onToggleActivityPriority?: (activityId: string) => void;
+  onIgnoreActivity?: (activityId: string) => void;
+  onRestoreActivity?: (activityId: string) => void;
   onClose: () => void;
 }
 
@@ -80,8 +96,9 @@ export interface AvailableTaskItem {
 export function getAvailableTaskItems(state: GameState): AvailableTaskItem[] {
   const items: AvailableTaskItem[] = [];
 
-  // Urgent Shelter Action if Radiation Storm is active and shelter is usable
+  // Urgent Shelter Action if Radiation Storm is actively occurring and shelter is usable
   if (
+    isEventOfficiallyActive(state.activeEvent) &&
     state.activeEvent?.definition.radiationLevel &&
     !state.crew.inShelter &&
     state.buildings.radiation_shelter.restoredOnce &&
@@ -207,6 +224,42 @@ function getSystemShortPurpose(id: BuildingId, difficulty: DifficultyLevel): str
   }
 }
 
+const ACTIVITY_CATEGORY_META: Record<
+  ActivityCategory,
+  { label: string; chipClass: string }
+> = {
+  maintenance: {
+    label: 'Maintenance',
+    chipClass: 'bg-[#F4C552]/40 text-[#8C4D32] border-[#B3693B]/40',
+  },
+  research: {
+    label: 'Research',
+    chipClass: 'bg-[#477C9B]/15 text-[#2E5D78] border-[#477C9B]/40',
+  },
+  exploration: {
+    label: 'Exploration',
+    chipClass: 'bg-[#718B78]/20 text-[#2E5439] border-[#718B78]/45',
+  },
+  crew: {
+    label: 'Crew Care',
+    chipClass: 'bg-[#E9B77B]/45 text-[#7A3524] border-[#B94F32]/35',
+  },
+};
+
+function renderActivityCategoryIcon(cat: ActivityCategory) {
+  switch (cat) {
+    case 'maintenance':
+      return <Wrench className="w-3 h-3 shrink-0" aria-hidden="true" />;
+    case 'research':
+      return <FlaskConical className="w-3 h-3 shrink-0" aria-hidden="true" />;
+    case 'exploration':
+      return <Compass className="w-3 h-3 shrink-0" aria-hidden="true" />;
+    case 'crew':
+    default:
+      return <HeartPulse className="w-3 h-3 shrink-0" aria-hidden="true" />;
+  }
+}
+
 export function MajorTasksSidebar({
   state,
   minimized = false,
@@ -214,10 +267,21 @@ export function MajorTasksSidebar({
   onRestCrew,
   onToggleShelter,
   onEndDay,
+  onStartActivity,
+  onToggleActivityPriority,
+  onIgnoreActivity,
+  onRestoreActivity,
   onClose,
 }: MajorTasksSidebarProps) {
   const [activeTab, setActiveTab] = useState<'tasks' | 'systems'>('tasks');
+  const [showIgnoredActivities, setShowIgnoredActivities] = useState(false);
   const availableItems = getAvailableTaskItems(state);
+  const allDailyActivities = state.dailyActivities ?? [];
+  const availableActivities = allDailyActivities
+    .filter((a) => a.status === 'available')
+    .sort((a, b) => Number(b.prioritized) - Number(a.prioritized));
+  const completedActivities = allDailyActivities.filter((a) => a.status === 'completed');
+  const ignoredActivities = allDailyActivities.filter((a) => a.status === 'ignored');
   const energyStats = calculateEnergyGenerationStats({
     buildings: state.buildings,
     currentResources: state.resources,
@@ -384,6 +448,230 @@ export function MajorTasksSidebar({
     },
   ];
 
+  const renderDailyActivitiesSection = () => {
+    if (
+      availableActivities.length === 0 &&
+      completedActivities.length === 0 &&
+      ignoredActivities.length === 0
+    ) {
+      return null;
+    }
+
+    const renderCostChips = (act: DailyActivityInstance) => {
+      const parts: string[] = [];
+      if (act.crewEnergyCost > 0) parts.push(`-${act.crewEnergyCost} Stam`);
+      if (act.resourceCost.energy) parts.push(`-${act.resourceCost.energy} En`);
+      if (act.resourceCost.water) parts.push(`-${act.resourceCost.water} H2O`);
+      if (act.resourceCost.oxygen) parts.push(`-${act.resourceCost.oxygen} O2`);
+      if (act.resourceCost.food) parts.push(`-${act.resourceCost.food} Food`);
+      return parts.join(' · ');
+    };
+
+    return (
+      <section className="space-y-1.5 pt-0.5" aria-label="Optional Daily Colony Ops">
+        <div className="flex items-center justify-between gap-1 px-0.5">
+          <span className="text-[11px] font-extrabold text-[#292C2B] flex items-center gap-1">
+            <Sparkles className="w-3.5 h-3.5 text-[#477C9B]" aria-hidden="true" />
+            <span>Daily Colony Ops</span>
+          </span>
+          <span className="text-[10px] font-extrabold text-[#477C9B]">
+            Optional ({availableActivities.length})
+          </span>
+        </div>
+
+        {availableActivities.map((act) => {
+          const catMeta = ACTIVITY_CATEGORY_META[act.category];
+          const specialist = CREW_SPECIALISTS[act.assignedCrew];
+          const validation = validateDailyActivity(act, state);
+          const crewAvail = getActivityCrewAvailability(act, state);
+          const costSummary = renderCostChips(act);
+          const isRunningThis =
+            state.pendingAction?.kind === 'activity' &&
+            state.pendingAction.activityId === act.id;
+
+          return (
+            <div
+              key={act.id}
+              className={`p-2 rounded-xl border-2 transition-all space-y-1.5 ${
+                act.prioritized
+                  ? 'bg-[#FFF7E2] border-[#B94F32] shadow-[0_2px_0_#292C2B]'
+                  : 'bg-[#FAF0DC] border-[#292C2B]'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-1">
+                <div className="flex items-center gap-1 min-w-0">
+                  <span
+                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-wide shrink-0 ${catMeta.chipClass}`}
+                  >
+                    {renderActivityCategoryIcon(act.category)}
+                    <span>{catMeta.label}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-0.5 text-[10px] font-mono-tabular font-bold text-[#292C2B]/70 shrink-0">
+                    <Clock className="w-2.5 h-2.5" aria-hidden="true" />
+                    {act.durationHours}h
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-0.5 shrink-0">
+                  {onToggleActivityPriority && (
+                    <button
+                      type="button"
+                      onClick={() => onToggleActivityPriority(act.id)}
+                      aria-label={act.prioritized ? 'Unprioritize activity' : 'Prioritize activity'}
+                      title={act.prioritized ? 'Prioritized' : 'Prioritize'}
+                      className={`w-6 h-6 rounded-md flex items-center justify-center cursor-pointer transition-colors ${
+                        act.prioritized
+                          ? 'bg-[#F4C552] text-[#292C2B]'
+                          : 'text-[#292C2B]/45 hover:text-[#292C2B] hover:bg-[#E9B77B]/50'
+                      }`}
+                    >
+                      <Star
+                        className="w-3.5 h-3.5"
+                        fill={act.prioritized ? 'currentColor' : 'none'}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onLocateBuilding(act.buildingId)}
+                    aria-label={`Locate ${BUILDING_DEFINITIONS[act.buildingId].shortName}`}
+                    title={`Focus ${BUILDING_DEFINITIONS[act.buildingId].shortName}`}
+                    className="w-6 h-6 rounded-md flex items-center justify-center text-[#477C9B] hover:bg-[#477C9B]/15 cursor-pointer transition-colors"
+                  >
+                    <MapPin className="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                  {onIgnoreActivity && (
+                    <button
+                      type="button"
+                      onClick={() => onIgnoreActivity(act.id)}
+                      aria-label="Skip activity for today"
+                      title="Ignore for today"
+                      className="w-6 h-6 rounded-md flex items-center justify-center text-[#292C2B]/45 hover:text-[#B94F32] hover:bg-[#FDE8E6] cursor-pointer transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs font-extrabold text-[#292C2B] leading-snug">
+                  {act.title}
+                </div>
+                <p className="text-[10px] font-semibold text-[#292C2B]/75 leading-snug mt-0.5">
+                  {act.relevanceReason}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1 text-[9.5px] font-extrabold">
+                <span className="px-1.5 py-0.5 rounded bg-[#EFE3CC] border border-[#292C2B]/20 text-[#292C2B]">
+                  {specialist.name} · {act.skillLabel}
+                </span>
+                <span className="px-1.5 py-0.5 rounded bg-[#DDE8D6] border border-[#396344]/30 text-[#2E5439]">
+                  {act.rewardSummary}
+                </span>
+                {costSummary && (
+                  <span className="px-1.5 py-0.5 rounded bg-[#F1D8A8]/70 text-[#292C2B]/80">
+                    {costSummary}
+                  </span>
+                )}
+                {!act.isOutdoor && (
+                  <span className="px-1.5 py-0.5 rounded bg-[#477C9B]/15 text-[#2E5D78]">
+                    Indoor Safe
+                  </span>
+                )}
+                {act.isOutdoor && outdoorHazard && (
+                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[#FDE8E6] text-[#C94B43]">
+                    <AlertTriangle className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />
+                    Outdoor Risk
+                  </span>
+                )}
+              </div>
+
+              {onStartActivity && (
+                <button
+                  type="button"
+                  disabled={!validation.canExecute || isBusy || isRunningThis}
+                  onClick={() => onStartActivity(act.id)}
+                  className={`mars-btn w-full min-h-[34px] py-1.5 px-2.5 text-[11px] font-extrabold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-55 disabled:cursor-not-allowed ${
+                    act.isOutdoor && outdoorHazard && validation.canExecute
+                      ? 'bg-[#D77B4A] hover:bg-[#c56c3d] text-[#FAF0DC]'
+                      : 'bg-[#477C9B] hover:bg-[#3a6984] text-[#FAF0DC]'
+                  }`}
+                >
+                  {isRunningThis ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden="true" />
+                      <span>In Progress...</span>
+                    </>
+                  ) : validation.canExecute ? (
+                    <>
+                      <Play className="w-3 h-3 shrink-0" aria-hidden="true" />
+                      <span>
+                        {act.isOutdoor && outdoorHazard
+                          ? `Accept (${crewAvail.statusLabel} · Risk)`
+                          : `Accept (${crewAvail.statusLabel})`}
+                      </span>
+                    </>
+                  ) : (
+                    <span>{validation.reason ?? crewAvail.statusLabel}</span>
+                  )}
+                </button>
+              )}
+            </div>
+          );
+        })}
+
+        {completedActivities.map((act) => (
+          <div
+            key={act.id}
+            className="px-2 py-1.5 rounded-lg bg-[#DDE8D6]/80 border border-[#396344]/35 flex items-center justify-between gap-1.5 text-[10px] font-extrabold text-[#2E5439]"
+          >
+            <span className="flex items-center gap-1 truncate">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <span className="truncate">{act.title}</span>
+            </span>
+            <span className="shrink-0">Done</span>
+          </div>
+        ))}
+
+        {ignoredActivities.length > 0 && (
+          <div className="pt-0.5">
+            <button
+              type="button"
+              onClick={() => setShowIgnoredActivities((prev) => !prev)}
+              className="text-[10px] font-bold text-[#292C2B]/65 hover:text-[#292C2B] underline cursor-pointer px-0.5"
+            >
+              {showIgnoredActivities
+                ? 'Hide skipped ops'
+                : `Skipped today (${ignoredActivities.length}) · Show`}
+            </button>
+            {showIgnoredActivities && onRestoreActivity && (
+              <div className="mt-1 space-y-1">
+                {ignoredActivities.map((act) => (
+                  <div
+                    key={act.id}
+                    className="px-2 py-1 rounded-lg bg-[#EFE3CC]/75 border border-[#292C2B]/20 flex items-center justify-between gap-2 text-[10px]"
+                  >
+                    <span className="font-bold text-[#292C2B]/75 truncate">{act.title}</span>
+                    <button
+                      type="button"
+                      onClick={() => onRestoreActivity(act.id)}
+                      className="font-extrabold text-[#477C9B] hover:underline shrink-0 cursor-pointer"
+                    >
+                      Restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+    );
+  };
+
   return (
     <aside
       aria-label="Outpost Tasks & Systems Drawer"
@@ -398,7 +686,7 @@ export function MajorTasksSidebar({
       >
         <ClipboardList className="w-5 h-5 text-[#B94F32]" aria-hidden="true" />
         <span className="font-mono-tabular text-[11px] font-extrabold text-[#292C2B]">
-          {availableItems.length}
+          {availableItems.length + availableActivities.length}
         </span>
       </div>
 
@@ -454,6 +742,8 @@ export function MajorTasksSidebar({
         <div className="p-2.5 overflow-y-auto overscroll-contain space-y-2 flex-1 min-h-0">
           {availableItems.length === 0 ? (
             <div className="space-y-2">
+              {renderDailyActivitiesSection()}
+
               <div className="mars-panel-light p-3 text-center space-y-1">
                 {state.crew.inShelter ? (
                   <>
@@ -475,6 +765,8 @@ export function MajorTasksSidebar({
                         ? 'Crew Needs Rest'
                         : state.hoursElapsed >= 22
                         ? 'Ready to End Sol'
+                        : availableActivities.length > 0
+                        ? 'Repairs Clear · Optional Ops Ready'
                         : 'Quiet Sol · Outpost Monitor'}
                     </div>
                     <p className="text-[11px] font-semibold text-[#292C2B]/75 leading-snug">
@@ -482,7 +774,9 @@ export function MajorTasksSidebar({
                         ? 'Stamina is low. Rest the crew or end the sol to sleep.'
                         : state.hoursElapsed >= 22
                         ? 'Night cycle reached. End the sol to log supplies and start fresh.'
-                        : 'Urgent tasks are clear. Monitor systems, reserves, and crew readiness below.'}
+                        : availableActivities.length > 0
+                        ? 'Urgent repairs are clear. Accept an optional Daily Colony Op above or skip and rest.'
+                        : 'All urgent systems are steady today. Monitor reserves or end the sol whenever ready.'}
                     </p>
                   </>
                 )}
@@ -719,6 +1013,8 @@ export function MajorTasksSidebar({
                   </button>
                 );
               })}
+
+              {renderDailyActivitiesSection()}
 
               {/* Compact Horizon & Facility Watch Footer */}
               <div className="mars-panel-light p-2 rounded-xl border border-[#292C2B]/25 space-y-1 text-[10px]">

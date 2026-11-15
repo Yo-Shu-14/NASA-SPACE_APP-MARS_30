@@ -89,6 +89,7 @@ export default function App() {
       state.screen === 'PLAYING' &&
       state.activeEvent &&
       !state.activeEvent.resolved &&
+      state.activeEvent.animationRemaining > 0 &&
       state.activeEvent.definition.severity !== 'minor'
     ) {
       const id = state.activeEvent.definition.id;
@@ -112,6 +113,7 @@ export default function App() {
     state.activeEvent?.definition.id,
     state.activeEvent?.definition.severity,
     state.activeEvent?.resolved,
+    (state.activeEvent?.animationRemaining ?? 0) > 0,
   ]);
 
   // Immediate clear feedback banner after every player action & tutorial step
@@ -128,6 +130,8 @@ export default function App() {
         msg = 'Seeds planted in Greenhouse!';
       } else if (evt.type === 'harvest') {
         msg = `Got +${evt.amount} Food!`;
+      } else if (evt.type === 'activity') {
+        msg = `${evt.label} — ${evt.rewardSummary}`;
       } else if (evt.type === 'shelter') {
         msg = evt.inShelter
           ? 'All crew & GIL inside Shelter!'
@@ -139,6 +143,12 @@ export default function App() {
         setEventImpactFlashKey(Date.now());
         window.clearTimeout(impactTimer);
         impactTimer = window.setTimeout(() => setEventImpactFlashKey(null), 540);
+      } else if (evt.type === 'event_ended') {
+        msg = evt.hasDamage
+          ? `${evt.title} passed — damaged gear still needs repair!`
+          : evt.spawnedHazardLabel
+          ? `${evt.title} passed — ${evt.spawnedHazardLabel} lingers.`
+          : `${evt.title} passed — normal operations resumed.`;
       } else if (evt.type === 'systems_unlocked') {
         const names = evt.buildings
           .map((id) => BUILDING_DEFINITIONS[id].shortName)
@@ -274,7 +284,10 @@ export default function App() {
   const isGilCenteredActive = isEventCentered || isDaySummaryCentered || isGilReportCentered;
 
   const activeEventDef =
-    state.screen === 'PLAYING' && state.activeEvent && !state.activeEvent.resolved
+    state.screen === 'PLAYING' &&
+    state.activeEvent &&
+    !state.activeEvent.resolved &&
+    state.activeEvent.animationRemaining > 0
       ? state.activeEvent.definition
       : null;
 
@@ -402,6 +415,21 @@ export default function App() {
                     onRestCrew={() => gameStore.restCrew()}
                     onToggleShelter={() => gameStore.toggleCrewShelter()}
                     onEndDay={() => gameStore.endDay()}
+                    onStartActivity={(activityId) => {
+                      gameStore.startDailyActivity(activityId);
+                      if (window.innerWidth < 768 || window.innerHeight < 520) {
+                        setLeftDrawerOpen(false);
+                      }
+                    }}
+                    onToggleActivityPriority={(activityId) =>
+                      gameStore.toggleDailyActivityPriority(activityId)
+                    }
+                    onIgnoreActivity={(activityId) =>
+                      gameStore.ignoreDailyActivity(activityId)
+                    }
+                    onRestoreActivity={(activityId) =>
+                      gameStore.restoreIgnoredDailyActivity(activityId)
+                    }
                     onLocateBuilding={(id) => {
                       gameStore.focusBuilding(id);
                       if (window.innerWidth < 768 || window.innerHeight < 520) {

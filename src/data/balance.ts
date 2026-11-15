@@ -210,9 +210,9 @@ export const DISASTER_WARNING_DURATION_SEC: Record<
   DifficultyLevel,
   { minor: number; major: number }
 > = {
-  easy: { minor: 22, major: 28 },
+  easy: { minor: 15, major: 20 },
   medium: { minor: 15, major: 20 },
-  hard: { minor: 9, major: 12 },
+  hard: { minor: 15, major: 20 },
 };
 
 export const MINOR_EVENT_COUNTS_BY_DIFFICULTY: Record<
