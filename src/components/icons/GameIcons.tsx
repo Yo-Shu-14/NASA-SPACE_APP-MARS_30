@@ -1,5 +1,5 @@
 import React from 'react';
-import marsLogo from '../../assets/logo.png';
+import marsLogo from '../../assets/logo.webp';
 import { GilEmotion } from '../../types/game';
 import { ResourceType } from '../../types/resource';
 
@@ -279,7 +279,7 @@ export function GilAvatarIcon({
 export function MarsLogoLockup() {
   return (
     <div className="mx-auto w-[320px] max-w-full text-center sm:w-[400px]">
-      <img src={marsLogo} alt="Mars 30" width={2172} height={724} className="block h-auto w-full" />
+      <img src={marsLogo} alt="Mars 30" width={1200} height={400} className="block h-auto w-full" />
       <p className="text-[13px] font-bold text-[#B94F32]">
         Jezero Crater Outpost Restoration
       </p>
